@@ -97,13 +97,8 @@ def train(config_path: Path) -> None:
         normalization_function=build_normalization_fn(normalization_divisor),
     )
 
-    model = SimpleMovieEncoder(
-        embedding_dim=embedding_dim,
-        num_features=num_features,
-        hidden_size=int(config.hidden_size),
-        output_size=int(config.output_size),
-        num_layers=int(config.num_layers),
-    ).to(device)
+    # TODO: Initialize model
+    # model = ...to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=float(config.learning_rate))
     loss_fn = torch.nn.MSELoss()
@@ -139,18 +134,7 @@ def train(config_path: Path) -> None:
 
             train_movie_embeddings, train_movies_scores, pred_movie_embeddings, pred_movies_scores = batch
 
-            # Encode movies
-            train_repr = model(train_movie_embeddings)  # (ctx, output_size)
-            pred_repr = model(pred_movie_embeddings)    # (target, output_size)
-
-            # Build a simple user representation from context (rating-weighted mean)
-            weights = train_movies_scores.view(train_movies_scores.shape[0]).to(device)
-            weights_sum = torch.clamp(weights.sum(), min=1e-6)
-            user_rep = (train_repr * weights.unsqueeze(1)).sum(dim=0) / weights_sum
-
-            # Predict target ratings via dot product with user representation
-            pred_scores = (pred_repr * user_rep.unsqueeze(0)).sum(dim=1)
-            loss = loss_fn(pred_scores, pred_movies_scores)
+            # TODO: Call model and get loss
 
             optimizer.zero_grad()
             loss.backward()

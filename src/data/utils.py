@@ -90,10 +90,10 @@ def create_dataset(
     movie_data: DataFrame,
     features: list[str],
     embedding_dim: int,
-    output_path: Path,
+    output_path: Path | None = None,
     max_elements: int | None = None,
     movies_to_consider: list[str] | None = None,
-) -> None:
+) -> dict:
     """
     Build the embedded movie dataset tensor and persist it to disk.
 
@@ -199,9 +199,11 @@ def create_dataset(
         "feature_configs": [cfg.__dict__ for cfg in feature_configs],
     }
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(dataset, output_path)
+    if output_path is not None:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(dataset, output_path)
 
+    return dataset
 
 if __name__ == "__main__":
     data = pd.read_csv('data/ratings_subset.csv', lineterminator='\n')
