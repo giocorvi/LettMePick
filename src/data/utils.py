@@ -93,7 +93,7 @@ def create_dataset(
     output_path: Path,
     max_elements: int | None = None,
     movies_to_consider: list[str] | None = None,
-) -> dict:
+) -> None:
     """
     Build the embedded movie dataset tensor and persist it to disk.
 
@@ -141,7 +141,7 @@ def create_dataset(
         max_elements, len(movie_data)
     )
 
-    per_movie_features: list[dict[str, torch.Tensor]] = []
+    embedded_movies: list[torch.Tensor] = []
     movie_ids: list[str] = []
 
     progress = tqdm(
@@ -183,23 +183,24 @@ def create_dataset(
         if not feature_map:
             continue
 
-        per_movie_features.append(feature_map)
+        with torch.no_grad():
+            embedded = movie_embedder([feature_map])
+        embedded_movies.append(embedded.squeeze(0))
         movie_ids.append(str(movie_id))
 
     if not movie_ids:
         raise ValueError("No movies matched the provided features")
 
-    embeddings = movie_embedder(per_movie_features).detach().clone()
+    embedded_movies = torch.stack(embedded_movies).detach().clone()
 
     dataset = {
-        "data": embeddings,
+        "data": embedded_movies,
         "ids": movie_ids,
         "feature_configs": [cfg.__dict__ for cfg in feature_configs],
     }
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(dataset, output_path)
-    return dataset
 
 
 if __name__ == "__main__":

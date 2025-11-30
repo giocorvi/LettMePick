@@ -1,0 +1,14 @@
+dataset_path = "data/subset_movie_dataset-id-pc-yr.pt"
+ratings_path = "data/ratings_subset.csv"
+device = "cpu"
+normalization_divisor = 10.0
+
+hidden_size = 64
+output_size = 32
+num_layers = 2
+learning_rate = 0.001
+
+context_size = 64
+target_size = 8
+epochs = 3
+steps_per_epoch = 100

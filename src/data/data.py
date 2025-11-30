@@ -30,7 +30,7 @@ def get_train_batch(
     movie_embeddings: torch.Tensor,
     context_size: int = 64,
     target_size: int = 8,
-    device: str = torch.device,
+    device: torch.device | str = "cpu",
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """ Creates a training batch.
     
@@ -44,22 +44,28 @@ def get_train_batch(
     pred_movies = random.sample(movies_in_context, target_size)
     train_movies = [movie for movie in movies_in_context if movie not in pred_movies]
 
-    train_movies_ids = torch.zeros((user_context_length - target_size), dtype=torch.int)
+    train_movies_ids = torch.zeros((user_context_length - target_size), dtype=torch.long)
     train_movies_scores = torch.zeros((user_context_length - target_size, 1, 1))
-    pred_movies_ids = torch.zeros((target_size), dtype=torch.int)
+    pred_movies_ids = torch.zeros((target_size), dtype=torch.long)
     pred_movies_scores = torch.zeros((target_size))
 
     for i, m in enumerate(train_movies):
-        train_movies_scores[i] = m[0]
+        train_movies_ids[i] = m[0]
         train_movies_scores[i] = m[1]
 
     for i, m in enumerate(pred_movies):
-        pred_movies_ids[len(train_movies) + i] = m[0]
+        pred_movies_ids[i] = m[0]
         pred_movies_scores[i] = m[1]
     
     train_movie_embeddings = movie_embeddings[train_movies_ids]
     pred_movie_embeddings = movie_embeddings[pred_movies_ids]
-    
+
+    device = torch.device(device)
+    train_movie_embeddings = train_movie_embeddings.to(device)
+    train_movies_scores = train_movies_scores.to(device)
+    pred_movie_embeddings = pred_movie_embeddings.to(device)
+    pred_movies_scores = pred_movies_scores.to(device)
+
     return (train_movie_embeddings, train_movies_scores, pred_movie_embeddings, pred_movies_scores)
 
 
