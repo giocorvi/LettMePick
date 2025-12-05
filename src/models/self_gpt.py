@@ -50,6 +50,7 @@ class MultiSelfAttentionHead(torch.nn.Module):
         self.residual_dropout = torch.nn.Dropout(residual_pdrop)
 
     def forward(self, x):
+        # TODO: improve effieciency. Run multiple heads in parallel.
         B, T, _ = x.shape
         out = torch.zeros((B, T, self.num_heads, self.head_dim), device=x.device, dtype=x.dtype)
         for i, head in enumerate(self.attention_heads):

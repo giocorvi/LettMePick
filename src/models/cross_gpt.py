@@ -11,8 +11,12 @@ class CrossAttentionHead(torch.nn.Module):
         self.value_head = torch.nn.Linear(input_dim, head_dim, bias=False)
         self.dropout = torch.nn.Dropout(pdrop)
 
-    def forward(self, x, y):
-        q, k, v = self.query_head(x), self.key_head(y), self.value_head(y)
+    def forward(self, query_states, context_states):
+        q, k, v = (
+            self.query_head(query_states),
+            self.key_head(context_states),
+            self.value_head(context_states),
+        )
 
         attn = torch.nn.functional.softmax(
             (q @ k.transpose(-2, -1)) / (self.head_dim ** 0.5),
@@ -43,11 +47,12 @@ class MultiCrossAttentionHead(torch.nn.Module):
         self.proj = torch.nn.Linear(num_heads * head_dim, input_dim)
         self.residual_dropout = torch.nn.Dropout(residual_pdrop)
 
-    def forward(self, x):
-        B, T, _ = x.shape
-        out = torch.zeros((B, T, self.num_heads, self.head_dim), device=x.device, dtype=x.dtype)
+    def forward(self, query_states, context_states):
+        # TODO: improve effieciency. Run multiple heads in parallel.
+        B, T, _ = query_states.shape
+        out = torch.zeros((B, T, self.num_heads, self.head_dim), device=query_states.device, dtype=query_states.dtype)
         for i, head in enumerate(self.attention_heads):
-            out[:, :, i] = head(x)
+            out[:, :, i] = head(query_states, context_states)
 
         out = self.proj(out.view((B, T, -1)))
 
@@ -65,10 +70,15 @@ class CrossAttentionBlock(torch.nn.Module):
             head_dim=head_dim,
         )
         self.feed_forward = FeedForward(embed_dim)
-        self.layer_norm_1 = torch.nn.LayerNorm(embed_dim)
-        self.layer_norm_2 = torch.nn.LayerNorm(embed_dim)
+        self.layer_norm_ctx = torch.nn.LayerNorm(embed_dim)
+        self.layer_norm_q1 = torch.nn.LayerNorm(embed_dim)
+        self.layer_norm_q2 = torch.nn.LayerNorm(embed_dim)
 
-    def forward(self, x):
-        x = x + self.mh_attention(self.layer_norm_1(x))
-        x = x + self.feed_forward(self.layer_norm_2(x))
-        return x
+    def forward(self, query_states, context_states):
+        query_states = query_states + self.mh_attention(
+            self.layer_norm_q1(query_states),
+            self.layer_norm_ctx(context_states)
+        )
+        query_states = query_states + self.feed_forward(self.layer_norm_q2(query_states))
+
+        return query_states

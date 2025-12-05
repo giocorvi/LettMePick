@@ -40,18 +40,18 @@ class SimpleMovieEncoder(torch.nn.Module):
     def forward(self, movie_embeddings: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            movie_embeddings: tensor shaped (batch, num_features, embedding_dim)
+            movie_embeddings: tensor shaped (batch, context_size, num_features, embedding_dim)
 
         Returns:
-            Tensor shaped (batch, output_size)
+            Tensor shaped (batch, context_size, output_size)
         """
-        batch_size = movie_embeddings.shape[0]
+        batch_size, context_size = movie_embeddings.shape[0], movie_embeddings.shape[1]
 
-        # collapse features/embedding dims -> (batch, num_features * embedding_dim)
-        x = movie_embeddings.view(batch_size, -1)
+        # collapse features/embedding dims -> (batch * context, num_features * embedding_dim)
+        x = movie_embeddings.view(batch_size * context_size, -1)
 
         # sequentially map flattened embeddings into output space
         for layer in self.model:
             x = layer(x)
 
-        return x
+        return x.reshape((batch_size, context_size, -1))
