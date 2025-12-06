@@ -1,4 +1,5 @@
 import random
+from collections import defaultdict
 from pathlib import Path
 from typing import Callable
 
@@ -18,23 +19,65 @@ def get_user_ratings_dict(
     raw_ratings_data: DataFrame,
     movie_ids: list[str],
     normalization_function: Callable,
-) -> dict[str, list[tuple[int, torch.Tensor]]]:
+) -> dict[str, list[tuple[int, float]]]:
     id_to_idx = {movie_id: idx for idx, movie_id in enumerate(movie_ids)}
-    ratings_with_idx = raw_ratings_data.assign(
-        movie_idx=raw_ratings_data["movie_id"].map(id_to_idx),
-        rating_norm=raw_ratings_data["rating_val"].apply(normalization_function),
-    )
+    user_ratings_dict: dict[str, list[tuple[int, float]]] = defaultdict(list)
+    total_count = 0
+    missing_count = 0
 
-    if ratings_with_idx["movie_idx"].isnull().any():
-        missing_ids = ratings_with_idx.loc[ratings_with_idx["movie_idx"].isnull(), "movie_id"].unique()
-        raise KeyError(f"Missing movie ids in provided list: {missing_ids}")
+    rows = raw_ratings_data[["user_id", "movie_id", "rating_val"]].itertuples(index=False, name=None)
+    for user_id, movie_id, rating_val in tqdm(rows, total=len(raw_ratings_data), desc="Building user ratings dict"):
+        total_count += 1
+        movie_idx = id_to_idx.get(movie_id)
+        if movie_idx is None:
+            missing_count += 1
+            continue
 
-    user_ratings_dict = {}
-    grouped = ratings_with_idx.groupby("user_id", sort=False)
-    for user_id, rows in tqdm(grouped, total=grouped.ngroups, desc="Building user ratings dict"):
-        user_ratings_dict[user_id] = list(zip(rows["movie_idx"].tolist(), rows["rating_norm"].tolist()))
+        rating_norm = normalization_function(rating_val)
+        user_ratings_dict[user_id].append((int(movie_idx), rating_norm))
 
-    return user_ratings_dict
+    if missing_count:
+        print(f"Warning: Dropping {missing_count} ratings with unknown movie ids out of {total_count} total.")
+
+    return dict(user_ratings_dict)
+
+
+def iter_user_ratings_shards(
+    raw_ratings_data: DataFrame,
+    movie_ids: list[str],
+    normalization_function: Callable,
+    max_users_per_shard: int = 100_000,
+):
+    """Yield user->ratings shards to keep peak memory bounded.
+
+    Each yielded shard is a dict[user_id] -> list[(movie_idx, norm_rating)], plus
+    per-shard missing/total counts so the caller can log warnings.
+    """
+    id_to_idx = {movie_id: idx for idx, movie_id in enumerate(movie_ids)}
+    shard: dict[str, list[tuple[int, torch.Tensor]]] = defaultdict(list)
+    shard_missing = 0
+    shard_total = 0
+
+    rows = raw_ratings_data[["user_id", "movie_id", "rating_val"]].itertuples(index=False, name=None)
+    for user_id, movie_id, rating_val in tqdm(rows, total=len(raw_ratings_data), desc="Building user ratings shards"):
+        shard_total += 1
+        movie_idx = id_to_idx.get(movie_id)
+        if movie_idx is None:
+            shard_missing += 1
+            continue
+
+        rating_norm = normalization_function(rating_val)
+        shard[user_id].append((int(movie_idx), rating_norm))
+
+        if len(shard) >= max_users_per_shard:
+            yield dict(shard), shard_missing, shard_total
+            shard = defaultdict(list)
+            shard_missing = 0
+            shard_total = 0
+
+    if shard:
+        yield dict(shard), shard_missing, shard_total
+
 
 def get_train_batch(
     user_ratings_dict: dict[str, list[tuple[int, torch.Tensor]]],

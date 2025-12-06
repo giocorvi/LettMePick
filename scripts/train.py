@@ -16,7 +16,7 @@ import pandas as pd
 import torch
 
 from src.data.data import get_train_batch, get_user_ratings_dict
-from src.models.movie_encoder import SimpleMovieEncoder
+from src.models.lett_me_pick import LettMePick
 
 # Prefer stdlib tomllib (Python 3.11+) and fallback to tomli if available.
 try:
@@ -39,6 +39,7 @@ class TrainConfig:
     hidden_size: int = 64
     output_size: int = 32
     num_layers: int = 2
+    num_attention_heads: int = 4
     learning_rate: float = 1e-3
     context_size: int = 64
     target_size: int = 8
@@ -68,6 +69,16 @@ def build_normalization_fn(divisor: float) -> Callable[[float], torch.Tensor]:
     return lambda x: torch.tensor(x / divisor, dtype=torch.float32)
 
 
+def log_parameter_counts(model: torch.nn.Module) -> None:
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    frozen_params = total_params - trainable_params
+    print(
+        f"Model parameters (total/trainable/frozen): "
+        f"{total_params:,} / {trainable_params:,} / {frozen_params:,}"
+    )
+
+
 def train(config_path: Path) -> None:
     raw_config = load_config(config_path)
     config = TrainConfig.from_dict(raw_config)
@@ -88,20 +99,20 @@ def train(config_path: Path) -> None:
     print(f"Loaded embeddings with shape: {movie_embeddings.shape}")
 
     print(f"Reading ratings from {ratings_path}...")
-    ratings_df = pd.read_csv(ratings_path, lineterminator="\n")
+    user_ratings_dict = torch.load(ratings_path, map_location="cpu")
 
-    normalization_divisor = float(config.normalization_divisor)
-    user_ratings_dict = get_user_ratings_dict(
-        ratings_df,
-        movie_ids,
-        normalization_function=build_normalization_fn(normalization_divisor),
-    )
+    model = LettMePick(
+        data_embed_dim=embedding_dim,
+        num_features=num_features,
+        model_embed_dim=int(config.output_size),
+        num_attention_heads=int(config.num_attention_heads),
+        encoder_hidden_size=int(config.hidden_size),
+        encoder_num_layers=int(config.num_layers),
+    ).to(device)
 
-    # TODO: Initialize model
-    # model = ...to(device)
+    log_parameter_counts(model)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=float(config.learning_rate))
-    loss_fn = torch.nn.MSELoss()
 
     context_size = int(config.context_size)
     target_size = int(config.target_size)
@@ -134,7 +145,12 @@ def train(config_path: Path) -> None:
 
             train_movie_embeddings, train_movies_scores, pred_movie_embeddings, pred_movies_scores = batch
 
-            # TODO: Call model and get loss
+            predictions = model(
+                context_embed=train_movie_embeddings,
+                query_embed=pred_movie_embeddings,
+                context_scores=train_movies_scores,
+            )
+            loss = model.compute_loss(predictions, pred_movies_scores)
 
             optimizer.zero_grad()
             loss.backward()

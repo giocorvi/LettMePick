@@ -13,7 +13,7 @@ class SimpleMovieEncoder(torch.nn.Module):
         num_features: int,
         hidden_size: int,
         output_size: int,
-        num_layers: int,
+        num_layers: int = 2,
     ):
         super().__init__()
 
