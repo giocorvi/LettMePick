@@ -12,6 +12,8 @@ class LettMePick(torch.nn.Module):
         num_features: int,
         model_embed_dim: int,
         num_attention_heads: int,
+        num_self_attention_blocks: int = 1,
+        num_cross_attention_blocks: int = 1,
         encoder_hidden_size: int | None = None,
         encoder_num_layers: int = 2,
     ):
@@ -25,8 +27,14 @@ class LettMePick(torch.nn.Module):
             hidden_size=hidden_size,
             num_layers=encoder_num_layers,
         )
-        self.self_attention_block = SelfAttentionBlock(embed_dim=model_embed_dim, num_heads=num_attention_heads)
-        self.cross_attention_block = CrossAttentionBlock(embed_dim=model_embed_dim, num_heads=num_attention_heads)
+        self.self_attention_blocks = torch.nn.ModuleList(
+            SelfAttentionBlock(embed_dim=model_embed_dim, num_heads=num_attention_heads)
+            for _ in range(num_self_attention_blocks)
+        )
+        self.cross_attention_blocks = torch.nn.ModuleList(
+            CrossAttentionBlock(embed_dim=model_embed_dim, num_heads=num_attention_heads)
+            for _ in range(num_cross_attention_blocks)
+        )
 
         self.final_block = torch.nn.Sequential(
             torch.nn.Linear(model_embed_dim, model_embed_dim),
@@ -57,8 +65,11 @@ class LettMePick(torch.nn.Module):
         context = self.score_features_fusion(context, context_scores)
         query = self.score_features_fusion(query, torch.zeros_like(query[:, :, 0]))
 
-        context = self.self_attention_block(context)
-        query = self.cross_attention_block(query, context)
+        for block in self.self_attention_blocks:
+            context = block(context)
+
+        for block in self.cross_attention_blocks:
+            query = block(query, context)
 
         batch_size, context_size = context.shape[0], query.shape[1]
         predictions = self.final_block(query.view(batch_size * context_size, -1)).reshape((batch_size, context_size))

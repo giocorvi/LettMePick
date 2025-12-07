@@ -12,10 +12,9 @@ import sys
 from pathlib import Path
 from typing import Any, Callable
 
-import pandas as pd
 import torch
 
-from src.data.data import get_train_batch, get_user_ratings_dict
+from src.data.data import get_train_batch
 from src.models.lett_me_pick import LettMePick
 
 # Prefer stdlib tomllib (Python 3.11+) and fallback to tomli if available.
@@ -37,9 +36,11 @@ class TrainConfig:
     device: str = "cpu"
     normalization_divisor: float = 10.0
     hidden_size: int = 64
-    output_size: int = 32
-    num_layers: int = 2
+    embedding_dim: int = 32
+    num_encoder_layers: int = 2
     num_attention_heads: int = 4
+    num_self_attention_blocks: int = 1
+    num_cross_attention_blocks: int = 1
     learning_rate: float = 1e-3
     context_size: int = 64
     target_size: int = 8
@@ -92,7 +93,6 @@ def train(config_path: Path) -> None:
     print(f"Loading dataset from {dataset_path}...")
     dataset = torch.load(dataset_path, map_location="cpu")
     movie_embeddings = dataset["data"]  # keep on CPU; batches move to device
-    movie_ids = dataset["ids"]
     num_features = movie_embeddings.shape[1]
     embedding_dim = movie_embeddings.shape[2]
 
@@ -104,10 +104,12 @@ def train(config_path: Path) -> None:
     model = LettMePick(
         data_embed_dim=embedding_dim,
         num_features=num_features,
-        model_embed_dim=int(config.output_size),
+        model_embed_dim=int(config.embedding_dim),
         num_attention_heads=int(config.num_attention_heads),
+        num_self_attention_blocks=int(config.num_self_attention_blocks),
+        num_cross_attention_blocks=int(config.num_cross_attention_blocks),
         encoder_hidden_size=int(config.hidden_size),
-        encoder_num_layers=int(config.num_layers),
+        encoder_num_layers=int(config.num_encoder_layers),
     ).to(device)
 
     log_parameter_counts(model)
