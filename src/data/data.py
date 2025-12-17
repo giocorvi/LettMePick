@@ -118,9 +118,9 @@ def get_train_batch(
         train_movies = [movie for movie in movies_in_context if movie not in pred_movies]
 
         train_movies_ids = torch.tensor([m[0] for m in train_movies], dtype=torch.long)
-        train_movies_scores = torch.stack([m[1] for m in train_movies]).to(dtype=torch.float)
+        train_movies_scores = torch.tensor([m[1] for m in train_movies]).to(dtype=torch.float)
         pred_movies_ids = torch.tensor([m[0] for m in pred_movies], dtype=torch.long)
-        pred_movies_scores = torch.stack([m[1] for m in pred_movies]).to(dtype=torch.float)
+        pred_movies_scores = torch.tensor([m[1] for m in pred_movies]).to(dtype=torch.float)
 
         train_embeddings.append(movie_embeddings[train_movies_ids])
         train_scores.append(train_movies_scores)
