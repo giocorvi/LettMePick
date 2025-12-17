@@ -82,44 +82,56 @@ def iter_user_ratings_shards(
 def get_train_batch(
     user_ratings_dict: dict[str, list[tuple[int, torch.Tensor]]],
     movie_embeddings: torch.Tensor,
+    batch_size: int = 1,
     context_size: int = 64,
     target_size: int = 8,
     device: torch.device | str = "cpu",
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """ Creates a training batch.
-    
-    Args:
-        user_ratings_dict: user_id -> list[(movie_id, normalized_rating)]
-    """
-    # TODO: Support batch_size > 1. batch_size as input, remove unsqueeze.
-    _, _, embedding_dim = movie_embeddings.shape
-    random_user = random.choice(list(user_ratings_dict.keys()))
-    user_context_length = min(context_size + target_size, len(user_ratings_dict[random_user]))
-    movies_in_context = random.sample(user_ratings_dict[random_user], user_context_length)
-    pred_movies = random.sample(movies_in_context, target_size)
-    train_movies = [movie for movie in movies_in_context if movie not in pred_movies]
+    """Creates a training batch."""
+    if not user_ratings_dict:
+        raise ValueError("user_ratings_dict is empty; cannot create batch.")
 
-    train_movies_ids = torch.zeros((user_context_length - target_size), dtype=torch.long)
-    train_movies_scores = torch.zeros((user_context_length - target_size))
-    pred_movies_ids = torch.zeros((target_size), dtype=torch.long)
-    pred_movies_scores = torch.zeros((target_size))
+    users = list(user_ratings_dict.keys())
+    if batch_size <= len(users):
+        batch_users = random.sample(users, batch_size)
+    else:
+        batch_users = random.choices(users, k=batch_size)
 
-    for i, m in enumerate(train_movies):
-        train_movies_ids[i] = m[0]
-        train_movies_scores[i] = m[1]
+    user_lengths = [len(user_ratings_dict[u]) for u in batch_users]
+    if any(length <= target_size for length in user_lengths):
+        raise ValueError("At least one user has too few ratings for the requested target_size.")
 
-    for i, m in enumerate(pred_movies):
-        pred_movies_ids[i] = m[0]
-        pred_movies_scores[i] = m[1]
-    
-    train_movie_embeddings = movie_embeddings[train_movies_ids]
-    pred_movie_embeddings = movie_embeddings[pred_movies_ids]
+    user_context_length = min(context_size + target_size, min(user_lengths))
+    if user_context_length <= target_size:
+        raise ValueError("Context length must be greater than target_size for all users.")
+
+    train_embeddings: list[torch.Tensor] = []
+    train_scores: list[torch.Tensor] = []
+    pred_embeddings: list[torch.Tensor] = []
+    pred_scores: list[torch.Tensor] = []
+
+    for user_id in batch_users:
+        user_ratings = user_ratings_dict[user_id]
+
+        movies_in_context = random.sample(user_ratings, user_context_length)
+        pred_movies = random.sample(movies_in_context, target_size)
+        train_movies = [movie for movie in movies_in_context if movie not in pred_movies]
+
+        train_movies_ids = torch.tensor([m[0] for m in train_movies], dtype=torch.long)
+        train_movies_scores = torch.stack([m[1] for m in train_movies]).to(dtype=torch.float)
+        pred_movies_ids = torch.tensor([m[0] for m in pred_movies], dtype=torch.long)
+        pred_movies_scores = torch.stack([m[1] for m in pred_movies]).to(dtype=torch.float)
+
+        train_embeddings.append(movie_embeddings[train_movies_ids])
+        train_scores.append(train_movies_scores)
+        pred_embeddings.append(movie_embeddings[pred_movies_ids])
+        pred_scores.append(pred_movies_scores)
 
     device = torch.device(device)
-    train_movie_embeddings = train_movie_embeddings.to(device).unsqueeze(0)
-    train_movies_scores = train_movies_scores.to(device).unsqueeze(0)
-    pred_movie_embeddings = pred_movie_embeddings.to(device).unsqueeze(0)
-    pred_movies_scores = pred_movies_scores.to(device).unsqueeze(0)
+    train_movie_embeddings = torch.stack(train_embeddings).to(device)
+    train_movies_scores = torch.stack(train_scores).to(device)
+    pred_movie_embeddings = torch.stack(pred_embeddings).to(device)
+    pred_movies_scores = torch.stack(pred_scores).to(device)
 
     return (train_movie_embeddings, train_movies_scores, pred_movie_embeddings, pred_movies_scores)
 
