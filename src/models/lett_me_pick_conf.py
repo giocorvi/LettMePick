@@ -1,8 +1,4 @@
-""" Different score features fusion.
-
-Instead of concateneting the movie features with the scores, the ladder are projected 
-onto the same dimension and summed together (see `self.score_features_fusion`) 
-"""
+""" Added `confidence` prediction which influences the loss. """
 import torch
 import torch.nn.functional as F
 
@@ -10,7 +6,7 @@ from .movie_encoder import SimpleMovieEncoder
 from .cross_gpt import CrossAttentionBlock
 from .self_gpt import SelfAttentionBlock
 
-class LettMePick_exp(torch.nn.Module):
+class LettMePick(torch.nn.Module):
     def __init__(
         self,
         data_embed_dim: int,
@@ -28,7 +24,7 @@ class LettMePick_exp(torch.nn.Module):
         self.encoder = SimpleMovieEncoder(
             embedding_dim=data_embed_dim,
             num_features=num_features,
-            output_size=model_embed_dim,
+            output_size=model_embed_dim - 1,
             hidden_size=hidden_size,
             num_layers=encoder_num_layers,
         )
@@ -44,24 +40,18 @@ class LettMePick_exp(torch.nn.Module):
         self.final_block = torch.nn.Sequential(
             torch.nn.Linear(model_embed_dim, model_embed_dim),
             torch.nn.ReLU(),
-            torch.nn.Linear(model_embed_dim, 1),
+            torch.nn.Linear(model_embed_dim, 2),
             torch.nn.Sigmoid(),
         )
 
-        # Fusion (add dropout??)
-        self.fusion_block_a = torch.nn.Sequential(
-            torch.nn.Linear(1, model_embed_dim),
-            torch.nn.LayerNorm(model_embed_dim),
-        )
-        self.fusion_block_proj = torch.nn.Linear(model_embed_dim, model_embed_dim)
-
+        self.confidence_softm = torch.nn.Softmax(dim=1)
 
     def score_features_fusion(self, features: torch.Tensor, scores: torch.Tensor):
-        assert features.ndim == 3 # B, T, D
-        B, T, _ = features.shape
-        if scores.ndim in [2, 3]: # [B, T] or [B, T, 1]
-            features = features + self.fusion_block_a(scores.view(-1, 1)).view(B, T, -1)
-            return self.fusion_block_proj(features)
+        assert features.ndim == 3
+        if scores.ndim == 2:
+            return torch.cat((features, scores.unsqueeze(-1)), dim=-1)
+        elif scores.ndim == 3:
+            return torch.cat((features, scores), dim=-1)
         else:
             raise IndexError(f"Scores has shape: {scores.shape}")
 
@@ -70,12 +60,13 @@ class LettMePick_exp(torch.nn.Module):
         context_embed: torch.Tensor,
         query_embed: torch.Tensor,
         context_scores: torch.Tensor,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         
         context = self.encoder(context_embed)
         query = self.encoder(query_embed)
 
         context = self.score_features_fusion(context, context_scores)
+        query = self.score_features_fusion(query, torch.zeros_like(query[:, :, 0]))
 
         for block in self.self_attention_blocks:
             context = block(context)
@@ -84,15 +75,17 @@ class LettMePick_exp(torch.nn.Module):
             query = block(query, context)
 
         batch_size, context_size = context.shape[0], query.shape[1]
-        predictions = self.final_block(query.view(batch_size * context_size, -1)).reshape((batch_size, context_size))
+        logits = self.final_block(query.view(batch_size * context_size, -1)).reshape((batch_size, context_size, 2))
         
-        return predictions
+        predictions, confidences = logits[:, :, 0], logits[:, :, 1]
+        return predictions, confidences, self.confidence_softm(confidences)*context_size
 
     def compute_loss(
         self,
         predictions: torch.Tensor,
         targets: torch.Tensor,
+        normalized_confidences: torch.Tensor, 
         reduction: str = "mean",
     ) -> torch.Tensor:
         """Compute regression loss for relevance scores in [0, 1]."""
-        return F.mse_loss(predictions, targets, reduction=reduction)
+        return ((predictions-targets)**2 * normalized_confidences).mean()
