@@ -41,10 +41,11 @@ class LettMePick(torch.nn.Module):
             torch.nn.Linear(model_embed_dim, model_embed_dim),
             torch.nn.ReLU(),
             torch.nn.Linear(model_embed_dim, 2),
-            torch.nn.Sigmoid(),
         )
 
-        self.confidence_softm = torch.nn.Softmax(dim=1)
+        self.pred_sigmoid = torch.nn.Sigmoid()
+        self.var_softplus = torch.nn.Softplus()
+        self.nll_loss = torch.nn.GaussianNLLLoss()
 
     def score_features_fusion(self, features: torch.Tensor, scores: torch.Tensor):
         assert features.ndim == 3
@@ -60,7 +61,7 @@ class LettMePick(torch.nn.Module):
         context_embed: torch.Tensor,
         query_embed: torch.Tensor,
         context_scores: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         
         context = self.encoder(context_embed)
         query = self.encoder(query_embed)
@@ -77,15 +78,16 @@ class LettMePick(torch.nn.Module):
         batch_size, context_size = context.shape[0], query.shape[1]
         logits = self.final_block(query.view(batch_size * context_size, -1)).reshape((batch_size, context_size, 2))
         
-        predictions, confidences = logits[:, :, 0], logits[:, :, 1]
-        return predictions, confidences, self.confidence_softm(confidences)*context_size
+        predictions, vars = logits[:, :, 0], logits[:, :, 1]
+
+        return self.pred_sigmoid(predictions), self.var_softplus(vars)
 
     def compute_loss(
         self,
         predictions: torch.Tensor,
         targets: torch.Tensor,
-        normalized_confidences: torch.Tensor, 
+        variance: torch.Tensor, 
         reduction: str = "mean",
     ) -> torch.Tensor:
         """Compute regression loss for relevance scores in [0, 1]."""
-        return ((predictions-targets)**2 * normalized_confidences).mean()
+        return self.nll_loss(predictions, targets, variance)
