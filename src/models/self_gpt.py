@@ -68,6 +68,22 @@ class MultiSelfAttentionHead(torch.nn.Module):
         out = self.proj(out)
 
         return self.residual_dropout(out)
+
+
+class MaskedMultiSelfAttentionHead(MultiSelfAttentionHead):
+    def forward(self, x, mask: torch.Tensor):
+        B, T, _ = x.shape
+        k = self.key_head(x).reshape((B, T, self.num_heads, self.head_dim)).transpose(1, 2)
+        q = self.query_head(x).reshape((B, T, self.num_heads, self.head_dim)).transpose(1, 2)
+        v = self.value_head(x).reshape((B, T, self.num_heads, self.head_dim)).transpose(1, 2)
+
+        attn_scores = (q @ k.transpose(-2, -1)) / (self.head_dim ** 0.5)
+        attn_scores = attn_scores.masked_fill(~mask[:, None, None, :], float("-inf"))
+        attn = torch.nn.functional.softmax(attn_scores, dim=-1)
+
+        out = (self.attention_dropout(attn) @ v).transpose(1, 2).contiguous().reshape((B, T, -1))
+        out = self.proj(out)
+        return self.residual_dropout(out)
         
 
 class FeedForward(torch.nn.Module):
@@ -98,5 +114,23 @@ class SelfAttentionBlock(torch.nn.Module):
 
     def forward(self, x):
         x = x + self.mh_attention(self.layer_norm_1(x))
+        x = x + self.feed_forward(self.layer_norm_2(x))
+        return x
+
+
+class MaskedSelfAttentionBlock(torch.nn.Module):
+    def __init__(self, embed_dim: int, num_heads: int):
+        super().__init__()
+        assert embed_dim % num_heads == 0, "The embedding dim has to be a multiple of the number of heads."
+        self.mh_attention = MaskedMultiSelfAttentionHead(
+            num_heads=num_heads,
+            input_dim=embed_dim,
+        )
+        self.feed_forward = FeedForward(embed_dim)
+        self.layer_norm_1 = torch.nn.LayerNorm(embed_dim)
+        self.layer_norm_2 = torch.nn.LayerNorm(embed_dim)
+
+    def forward(self, x, mask: torch.Tensor):
+        x = x + self.mh_attention(self.layer_norm_1(x), mask)
         x = x + self.feed_forward(self.layer_norm_2(x))
         return x
