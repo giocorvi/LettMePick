@@ -1,5 +1,5 @@
 import random
-from typing import Any, Optional
+from typing import Any
 
 from dataclasses import dataclass
 from tqdm import tqdm
@@ -20,6 +20,7 @@ class Movie:
 def prepare_dataset(
     user_ratings_dict: dict[str, dict[str, list[int | str]]],
     movie_dataset: dict[str, dict[str, Any]],
+    verbose: bool = False,
 ) -> list[Movie]:
     """
     Creates the movie dataset and prepares the user ratings dict for faster acces during training.
@@ -61,9 +62,10 @@ def prepare_dataset(
         for movie_id, rating_val in zip(movie_ids, rating_vals):
             movie_index = movie_id_to_index.get(movie_id)
             if movie_index is None:
-                print(
-                    f"Warning: movie_id {movie_id} not found in dataset for user {user_id}; skipping."
-                )
+                if verbose:
+                    print(
+                        f"Warning: movie_id {movie_id} not found in dataset for user {user_id}; skipping."
+                    )
                 continue
             new_movie_ids.append(movie_index)
             new_rating_vals.append(rating_val)
@@ -152,43 +154,21 @@ def split_user_ratings_dict(
     val_dict: dict[str, dict[str, list[int | str]]] = {}
     test_dict: dict[str, dict[str, list[int | str]]] = {}
 
+    user_ids = list(user_ratings_dict.keys())
+    rng.shuffle(user_ids)
+
+    test_count = int(len(user_ids) * test_ratio)
+    val_count = int(len(user_ids) * val_ratio)
+    test_users = set(user_ids[:test_count])
+    val_users = set(user_ids[test_count : test_count + val_count])
+
     for user_id, user_data in user_ratings_dict.items():
-        movie_ids = user_data.get("movie_ids", [])
-        rating_key = "rating_val" if "rating_val" in user_data else "rating_vals"
-        rating_vals = user_data.get(rating_key, [])
-        if len(movie_ids) != len(rating_vals):
-            raise ValueError(f"movie_ids and {rating_key} length mismatch for user {user_id}.")
-
-        indices = list(range(len(movie_ids)))
-        rng.shuffle(indices)
-
-        test_count = int(len(indices) * test_ratio)
-        val_count = int(len(indices) * val_ratio)
-        test_idx = set(indices[:test_count])
-        val_idx = set(indices[test_count : test_count + val_count])
-
-        train_movie_ids: list[int] = []
-        train_rating_vals: list[int | str] = []
-        val_movie_ids: list[int] = []
-        val_rating_vals: list[int | str] = []
-        test_movie_ids: list[int] = []
-        test_rating_vals: list[int | str] = []
-
-        for idx, movie_id in enumerate(movie_ids):
-            rating_val = rating_vals[idx]
-            if idx in test_idx:
-                test_movie_ids.append(movie_id)
-                test_rating_vals.append(rating_val)
-            elif idx in val_idx:
-                val_movie_ids.append(movie_id)
-                val_rating_vals.append(rating_val)
-            else:
-                train_movie_ids.append(movie_id)
-                train_rating_vals.append(rating_val)
-
-        train_dict[user_id] = {"movie_ids": train_movie_ids, rating_key: train_rating_vals}
-        val_dict[user_id] = {"movie_ids": val_movie_ids, rating_key: val_rating_vals}
-        test_dict[user_id] = {"movie_ids": test_movie_ids, rating_key: test_rating_vals}
+        if user_id in test_users:
+            test_dict[user_id] = user_data
+        elif user_id in val_users:
+            val_dict[user_id] = user_data
+        else:
+            train_dict[user_id] = user_data
 
     return train_dict, val_dict, test_dict
 
