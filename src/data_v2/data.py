@@ -37,6 +37,8 @@ def prepare_dataset(
     for movie_id, movie_info in movie_dataset.items():
         if 'year_released' not in movie_info:
             continue
+        if movie_info['year_released'] is None:
+            continue
 
         genres = movie_info.get('letterboxd_genres', [])
         genres = [g.lower() for g in genres]
@@ -46,8 +48,8 @@ def prepare_dataset(
                 id=movie_id,
                 year=movie_info['year_released'],
                 genres=genres,
-                actors=movie_info.get('actors'),
-                directors=movie_info.get('director'),
+                actors=movie_info.get('actors', []) ,
+                directors=movie_info.get('director', []),
             )
         )
         movie_id_to_index[movie_id] = len(final_movie_dataset) - 1
