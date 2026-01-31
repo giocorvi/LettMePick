@@ -63,7 +63,7 @@ class LettMePick_exp(torch.nn.Module):
             for _ in range(num_movie_attention_blocks)
         )
 
-        self.movie_projection = torch.nn.Linear(model_embed_dim, model_embed_dim)
+        self.movie_projection = torch.nn.Linear(movie_token_dim, model_embed_dim)
 
         self.self_attention_blocks = torch.nn.ModuleList(
             SelfAttentionBlock(embed_dim=model_embed_dim, num_heads=num_attention_heads)
