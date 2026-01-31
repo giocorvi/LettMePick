@@ -27,6 +27,22 @@ class LettMePick_exp(torch.nn.Module):
         num_cross_attention_blocks: int = 1,
         device: torch.device | str = "cpu",
     ):
+        """Initialize the model and configure encoders, attention blocks, and fusion layers.
+
+        Args:
+            feature_size: Size of per-movie feature vector.
+            prefix_size: Size of prefix token features added by the encoder.
+            num_id_buckets: Number of ID buckets for the 'movie-id' feature.
+            num_actor_buckets: Number of actor buckets for the 'cast' feature.
+            num_genre_buckets: Number of genre buckets for the 'genre' feature.
+            num_director_buckets: Number of director buckets for the 'director' feature.
+            model_embed_dim: Embedding dimension used throughout attention blocks.
+            num_attention_heads: Number of heads in each attention block.
+            num_movie_attention_blocks: Count of masked self-attention blocks for movie tokens.
+            num_self_attention_blocks: Count of self-attention blocks over the context set.
+            num_cross_attention_blocks: Count of cross-attention blocks from query to context.
+            device: Device for model parameters and intermediate tensors.
+        """
         super().__init__()
 
         self.device = torch.device(device)
@@ -43,7 +59,7 @@ class LettMePick_exp(torch.nn.Module):
 
         movie_token_dim = feature_size + prefix_size
         self.movie_attention_blocks = torch.nn.ModuleList(
-            MaskedSelfAttentionBlock(embed_dim=model_embed_dim, num_heads=num_attention_heads)
+            MaskedSelfAttentionBlock(embed_dim=movie_token_dim, num_heads=num_attention_heads)
             for _ in range(num_movie_attention_blocks)
         )
 

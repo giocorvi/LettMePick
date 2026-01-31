@@ -130,7 +130,7 @@ class MaskedSelfAttentionBlock(torch.nn.Module):
         self.layer_norm_1 = torch.nn.LayerNorm(embed_dim)
         self.layer_norm_2 = torch.nn.LayerNorm(embed_dim)
 
-    def forward(self, x, mask: torch.Tensor):
+    def forward(self, x: torch.Tensor, mask: torch.Tensor):
         x = x + self.mh_attention(self.layer_norm_1(x), mask)
         x = x + self.feed_forward(self.layer_norm_2(x))
         return x
