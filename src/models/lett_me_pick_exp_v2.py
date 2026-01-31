@@ -25,7 +25,6 @@ class LettMePick_exp(torch.nn.Module):
         num_movie_attention_blocks: int = 1,
         num_self_attention_blocks: int = 1,
         num_cross_attention_blocks: int = 1,
-        device: torch.device | str = "cpu",
     ):
         """Initialize the model and configure encoders, attention blocks, and fusion layers.
 
@@ -45,8 +44,6 @@ class LettMePick_exp(torch.nn.Module):
         """
         super().__init__()
 
-        self.device = torch.device(device)
-
         self.encoder = MovieEncoder(
             feature_size=feature_size,
             prefix_size=prefix_size,
@@ -54,7 +51,6 @@ class LettMePick_exp(torch.nn.Module):
             num_actor_buckets=num_actor_buckets,
             num_genre_buckets=num_genre_buckets,
             num_director_buckets=num_director_buckets,
-            device=self.device,
         )
 
         movie_token_dim = feature_size + prefix_size
@@ -87,7 +83,6 @@ class LettMePick_exp(torch.nn.Module):
             torch.nn.LayerNorm(model_embed_dim),
         )
         self.fusion_block_proj = torch.nn.Linear(model_embed_dim, model_embed_dim)
-        self.to(self.device)
 
 
     def score_features_fusion(self, features: torch.Tensor, scores: torch.Tensor):
@@ -106,8 +101,6 @@ class LettMePick_exp(torch.nn.Module):
         context_scores: torch.Tensor,
     ) -> torch.Tensor:
         
-        context_scores = context_scores.to(self.device)
-
         context = self._encode_movies(context_movies)
         query = self._encode_movies(query_movies)
 
@@ -119,8 +112,8 @@ class LettMePick_exp(torch.nn.Module):
         for block in self.cross_attention_blocks:
             query = block(query, context)
 
-        batch_size, context_size = context.shape[0], query.shape[1]
-        predictions = self.final_block(query.view(batch_size * context_size, -1)).reshape((batch_size, context_size))
+        batch_size, query_size = context.shape[0], query.shape[1]
+        predictions = self.final_block(query.view(batch_size * query_size, -1)).reshape((batch_size, query_size))
         
         return predictions
 
@@ -135,23 +128,8 @@ class LettMePick_exp(torch.nn.Module):
             raise ValueError("All batch entries must contain the same number of movies.")
 
         flat_movies = [movie for movies in movies_batch for movie in movies]
-        tokens_list = [self.encoder(movie).to(self.device) for movie in flat_movies]
-        token_dim = tokens_list[0].shape[1]
-        max_len = max(tokens.shape[0] for tokens in tokens_list)
+        x, mask = self.encoder(flat_movies)
 
-        batch_tokens = torch.zeros(
-            (len(tokens_list), max_len, token_dim),
-            device=self.device,
-            dtype=tokens_list[0].dtype,
-        )
-        mask = torch.zeros((len(tokens_list), max_len), device=self.device, dtype=torch.bool)
-
-        for idx, tokens in enumerate(tokens_list):
-            length = tokens.shape[0]
-            batch_tokens[idx, :length] = tokens
-            mask[idx, :length] = True
-
-        x = batch_tokens
         for block in self.movie_attention_blocks:
             x = block(x, mask)
 
