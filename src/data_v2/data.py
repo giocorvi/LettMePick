@@ -70,7 +70,7 @@ def prepare_dataset(
                     )
                 continue
             new_movie_ids.append(movie_index)
-            new_rating_vals.append(rating_val)
+            new_rating_vals.append(float(rating_val) / 10.0)
 
         user_ratings_dict[user_id]['movie_ids'] = new_movie_ids
         user_ratings_dict[user_id]['rating_vals'] = new_rating_vals

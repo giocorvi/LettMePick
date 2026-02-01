@@ -139,6 +139,16 @@ class LettMePick_exp(torch.nn.Module):
         context_size = sizes[0]
         return movie_embeddings.reshape(batch_size, context_size, -1)
 
+    def freeze_encoder(self) -> None:
+        """Freeze movie encoder parameters to avoid gradient computation."""
+        for param in self.encoder.parameters():
+            param.requires_grad = False
+
+    def unfreeze_encoder(self) -> None:
+        """Unfreeze movie encoder parameters so they receive gradients."""
+        for param in self.encoder.parameters():
+            param.requires_grad = True
+
     def compute_loss(
         self,
         predictions: torch.Tensor,
