@@ -9,7 +9,6 @@ import torch.nn.functional as F
 from .movie_encoder import MovieEncoder
 from .cross_gpt import CrossAttentionBlock
 from .self_gpt import MaskedSelfAttentionBlock, SelfAttentionBlock
-from ..data_v2.data import Movie
 
 class LettMePick_exp(torch.nn.Module):
     def __init__(
@@ -96,13 +95,13 @@ class LettMePick_exp(torch.nn.Module):
 
     def forward(
         self,
-        context_movies: list[list[Movie]],
-        query_movies: list[list[Movie]],
+        context_movies: dict[str, torch.Tensor],
+        query_movies: dict[str, torch.Tensor],
         context_scores: torch.Tensor,
     ) -> torch.Tensor:
-        
-        context = self._encode_movies(context_movies)
-        query = self._encode_movies(query_movies)
+        batch_size = context_scores.shape[0]
+        context = self._encode_movies(context_movies, batch_size=batch_size)
+        query = self._encode_movies(query_movies, batch_size=batch_size)
 
         context = self.score_features_fusion(context, context_scores)
 
@@ -117,26 +116,28 @@ class LettMePick_exp(torch.nn.Module):
         
         return predictions
 
-    def _encode_movies(self, movies_batch: list[list[Movie]]) -> torch.Tensor:
-        if not movies_batch:
+    def _encode_movies(
+        self,
+        movies_batch: dict[str, torch.Tensor],
+        batch_size: int | None = None,
+    ) -> torch.Tensor:
+        if batch_size is None:
+            raise ValueError("batch_size is required when passing collated tensors.")
+        if "id_idx" not in movies_batch:
+            raise KeyError("movies_batch is missing required key: 'id_idx'.")
+        flat_count = int(movies_batch["id_idx"].shape[0])
+        if flat_count == 0:
             raise ValueError("movies_batch is empty; cannot encode movies.")
-
-        sizes = [len(movies) for movies in movies_batch]
-        if any(size == 0 for size in sizes):
-            raise ValueError("Each batch entry must contain at least one movie.")
-        if len(set(sizes)) != 1:
-            raise ValueError("All batch entries must contain the same number of movies.")
-
-        flat_movies = [movie for movies in movies_batch for movie in movies]
-        x, mask = self.encoder(flat_movies)
-
+        if flat_count % batch_size != 0:
+            raise ValueError(
+                "movies_batch size is not divisible by batch_size; cannot infer sequence length."
+            )
+        context_size = flat_count // batch_size
+        x, mask = self.encoder(movies_batch)
         for block in self.movie_attention_blocks:
             x = block(x, mask)
-
         cls_embeddings = x[:, 0, :]
         movie_embeddings = self.movie_projection(cls_embeddings)
-        batch_size = len(movies_batch)
-        context_size = sizes[0]
         return movie_embeddings.reshape(batch_size, context_size, -1)
 
     def freeze_encoder(self) -> None:

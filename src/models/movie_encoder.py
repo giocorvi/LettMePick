@@ -2,12 +2,7 @@
 
 from __future__ import annotations
 
-import hashlib
-from typing import Sequence
-
 import torch
-
-from src.data_v2.data import Movie
 
 
 class SimpleMovieEncoder(torch.nn.Module):
@@ -102,88 +97,10 @@ class MovieEncoder(torch.nn.Module):
         self.director_prefix = torch.nn.Parameter(torch.zeros(prefix_size))
         self.year_prefix = torch.nn.Parameter(torch.zeros(prefix_size))
         self.cls_token = torch.nn.Parameter(torch.zeros(prefix_size + feature_size))
-        self._hash_cache: dict[tuple[str | int, int], int] = {}
 
-    
-    def forward(self, movies: Movie | Sequence[Movie]) -> tuple[torch.Tensor, torch.Tensor]:
-        """
-        Args:
-            movies: Movie instance or a batch of Movie instances
-
-        Returns:
-            Tensor shaped (num_features, feature_size + prefix_size) for a single movie,
-            or (batch, num_features, feature_size + prefix_size) for a batch.
-        """
-        if isinstance(movies, Movie):
-            collated = self.collate_movies([movies])
-            embeddings, mask = self._encode_collated(collated)
-            return embeddings[0], mask[0]
-        if not movies:
-            raise ValueError("movies batch is empty; cannot encode.")
-        collated = self.collate_movies(movies)
-        return self._encode_collated(collated)
-
-    def collate_movies(self, movies: Sequence[Movie]) -> dict[str, torch.Tensor]:
-        """Collate a batch of Movie objects into padded index tensors + masks."""
-        if not movies:
-            raise ValueError("movies batch is empty; cannot collate.")
-
-        device = self.id_embedding.weight.device
-        batch_size = len(movies)
-
-        max_actors = max(len(movie.actors or []) for movie in movies)
-        max_genres = max(len(movie.genres or []) for movie in movies)
-        max_directors = max(len(movie.directors or []) for movie in movies)
-
-        id_idx = torch.empty(batch_size, dtype=torch.long, device=device)
-        year = torch.empty(batch_size, dtype=torch.float32, device=device)
-
-        actors_idx = torch.zeros((batch_size, max_actors), dtype=torch.long, device=device)
-        actors_mask = torch.zeros((batch_size, max_actors), dtype=torch.bool, device=device)
-        genres_idx = torch.zeros((batch_size, max_genres), dtype=torch.long, device=device)
-        genres_mask = torch.zeros((batch_size, max_genres), dtype=torch.bool, device=device)
-        directors_idx = torch.zeros(
-            (batch_size, max_directors), dtype=torch.long, device=device
-        )
-        directors_mask = torch.zeros(
-            (batch_size, max_directors), dtype=torch.bool, device=device
-        )
-
-        for i, movie in enumerate(movies):
-            id_idx[i] = self._hash_to_bucket(movie.id, self.id_embedding.num_embeddings)
-            year[i] = float(movie.year)
-
-            actors = movie.actors or []
-            for j, actor in enumerate(actors):
-                actors_idx[i, j] = self._hash_to_bucket(
-                    actor, self.actor_embedding.num_embeddings
-                )
-                actors_mask[i, j] = True
-
-            genres = movie.genres or []
-            for j, genre in enumerate(genres):
-                genres_idx[i, j] = self._hash_to_bucket(
-                    genre, self.genre_embedding.num_embeddings
-                )
-                genres_mask[i, j] = True
-
-            directors = movie.directors or []
-            for j, director in enumerate(directors):
-                directors_idx[i, j] = self._hash_to_bucket(
-                    director, self.director_embedding.num_embeddings
-                )
-                directors_mask[i, j] = True
-
-        return {
-            "id_idx": id_idx,
-            "year": year,
-            "actors_idx": actors_idx,
-            "actors_mask": actors_mask,
-            "genres_idx": genres_idx,
-            "genres_mask": genres_mask,
-            "directors_idx": directors_idx,
-            "directors_mask": directors_mask,
-        }
+    def forward(self, batch: dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
+        """Encode a pre-collated movie batch (hashed indices + masks)."""
+        return self._encode_collated(batch)
 
     def _encode_collated(self, batch: dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
         device = self.id_embedding.weight.device
@@ -264,21 +181,7 @@ class MovieEncoder(torch.nn.Module):
         )
         return embeddings, mask
 
-
     def _validate_bucket_count(self, count: int, name: str) -> int:
         if count <= 0:
             raise ValueError(f"{name} must be positive")
         return count
-
-    def _hash_to_bucket(self, value: str | int, num_buckets: int) -> int:
-        cache_key = (value, num_buckets)
-        cached = self._hash_cache.get(cache_key)
-        if cached is not None:
-            return cached
-        if isinstance(value, int):
-            bucket = value % num_buckets
-        else:
-            digest = hashlib.sha256(str(value).encode("utf-8")).digest()
-            bucket = int.from_bytes(digest[:8], "little") % num_buckets
-        self._hash_cache[cache_key] = bucket
-        return bucket

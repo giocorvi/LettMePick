@@ -6,6 +6,7 @@ from tqdm import tqdm
 
 import torch
 
+from src.data.prehash_v2 import PrehashedMovie, collate_prehashed_batch, prehash_movies
 
 @dataclass(frozen=True)
 class Movie:
@@ -20,15 +21,23 @@ class Movie:
 def prepare_dataset(
     user_ratings_dict: dict[str, dict[str, list[int | str]]],
     movie_dataset: dict[str, dict[str, Any]],
+    num_id_buckets: int,
+    num_actor_buckets: int,
+    num_genre_buckets: int,
+    num_director_buckets: int,
     verbose: bool = False,
-) -> list[Movie]:
+) -> list[PrehashedMovie]:
     """
-    Creates the movie dataset and prepares the user ratings dict for faster acces during training.
+    Creates a prehashed movie dataset and prepares the user ratings dict for faster access.
 
     NOTE: This function modifies the user ratings dict in-place.
     
     :param user_ratings_dict: It's a dict of user ratings. Each user has 'movie_ids' and 'rating_val'.
     :param movie_dataset: It's a dict movie each with represented by a dict itself.
+    :param num_id_buckets: Number of hash buckets for movie ids.
+    :param num_actor_buckets: Number of hash buckets for actors.
+    :param num_genre_buckets: Number of hash buckets for genres.
+    :param num_director_buckets: Number of hash buckets for directors.
     :type user_ratings_dict: dict[str, dict[str, list]]
     """
     movie_id_to_index: dict[str, int] = {}
@@ -75,17 +84,24 @@ def prepare_dataset(
         user_ratings_dict[user_id]['movie_ids'] = new_movie_ids
         user_ratings_dict[user_id]['rating_vals'] = new_rating_vals
 
-    return final_movie_dataset
+    return prehash_movies(
+        final_movie_dataset,
+        num_id_buckets=num_id_buckets,
+        num_actor_buckets=num_actor_buckets,
+        num_genre_buckets=num_genre_buckets,
+        num_director_buckets=num_director_buckets,
+    )
 
 
 def get_train_batch(
     user_ratings_dict: dict[str, dict[str, list[int | str]]],
-    movie_dataset: list[Movie],
+    prehashed_dataset: list[PrehashedMovie],
     batch_size: int = 1,
     context_size: int = 64,
     target_size: int = 8,
-) -> tuple[list[list[Movie]], list[list[float]], list[list[Movie]], list[list[float]]]:
-    """Creates a training batch."""
+    device: torch.device | str = "cpu",
+) -> tuple[dict[str, torch.Tensor], torch.Tensor, dict[str, torch.Tensor], torch.Tensor]:
+    """Creates a training batch from prehashed movies and returns collated tensors."""
     if not user_ratings_dict:
         raise ValueError("user_ratings_dict is empty; cannot create batch.")
 
@@ -103,9 +119,9 @@ def get_train_batch(
     if user_context_length <= target_size:
         raise ValueError("Context length must be greater than target_size for all users.")
 
-    train_movies_batch: list[list[Movie]] = []
+    train_movies_batch: list[list[PrehashedMovie]] = []
     train_scores_batch: list[list[float]] = []
-    pred_movies_batch: list[list[Movie]] = []
+    pred_movies_batch: list[list[PrehashedMovie]] = []
     pred_scores_batch: list[list[float]] = []
 
     for user_id in batch_users:
@@ -120,9 +136,9 @@ def get_train_batch(
         pred_positions = set(random.sample(chosen_positions, target_size))
         train_positions = [pos for pos in chosen_positions if pos not in pred_positions]
 
-        train_movies = [movie_dataset[movie_ids[pos]] for pos in train_positions]
+        train_movies = [prehashed_dataset[movie_ids[pos]] for pos in train_positions]
         train_scores = [float(rating_vals[pos]) for pos in train_positions]
-        pred_movies = [movie_dataset[movie_ids[pos]] for pos in pred_positions]
+        pred_movies = [prehashed_dataset[movie_ids[pos]] for pos in pred_positions]
         pred_scores = [float(rating_vals[pos]) for pos in pred_positions]
 
         train_movies_batch.append(train_movies)
@@ -130,7 +146,13 @@ def get_train_batch(
         pred_movies_batch.append(pred_movies)
         pred_scores_batch.append(pred_scores)
 
-    return (train_movies_batch, train_scores_batch, pred_movies_batch, pred_scores_batch)
+    device = torch.device(device)
+    context_batch = collate_prehashed_batch(train_movies_batch, device=device)
+    query_batch = collate_prehashed_batch(pred_movies_batch, device=device)
+    context_scores = torch.tensor(train_scores_batch, dtype=torch.float32, device=device)
+    query_scores = torch.tensor(pred_scores_batch, dtype=torch.float32, device=device)
+
+    return (context_batch, context_scores, query_batch, query_scores)
 
 
 def split_user_ratings_dict(
@@ -179,5 +201,12 @@ if __name__ == '__main__':
     movie_dataset = torch.load('/home/jcrows/torch_env/LettMePick/data/2026-batch/tests/sub-movie-dataset.pt', weights_only=False)
     users_ratings_dict = torch.load('/home/jcrows/torch_env/LettMePick/data/2026-batch/tests/sub-users-ratings.pt', weights_only=False)
 
-    movie_dataset = prepare_dataset(users_ratings_dict, movie_dataset)
+    movie_dataset = prepare_dataset(
+        users_ratings_dict,
+        movie_dataset,
+        num_id_buckets=1000,
+        num_actor_buckets=1000,
+        num_genre_buckets=100,
+        num_director_buckets=100,
+    )
     import ipdb; ipdb.set_trace()
