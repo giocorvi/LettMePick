@@ -75,61 +75,89 @@ def prehash_movies(
     return prehashed
 
 
-def collate_prehashed_batch(
-    movies_batch: Sequence[Sequence[PrehashedMovie]],
+def build_prehashed_bank(
+    prehashed: Sequence[PrehashedMovie],
+) -> dict[str, torch.Tensor]:
+    """Build fixed-size tensors + masks for all prehashed movies."""
+    if not prehashed:
+        raise ValueError("prehashed is empty; cannot build prehashed bank.")
+
+    max_actors = max((len(movie.actors_idx) for movie in prehashed), default=0)
+    max_genres = max((len(movie.genres_idx) for movie in prehashed), default=0)
+    max_directors = max((len(movie.directors_idx) for movie in prehashed), default=0)
+
+    count = len(prehashed)
+    bank: dict[str, torch.Tensor] = {
+        "id_idx": torch.empty(count, dtype=torch.long),
+        "year": torch.empty(count, dtype=torch.float32),
+        "actors_idx": torch.zeros((count, max_actors), dtype=torch.long),
+        "actors_mask": torch.zeros((count, max_actors), dtype=torch.bool),
+        "genres_idx": torch.zeros((count, max_genres), dtype=torch.long),
+        "genres_mask": torch.zeros((count, max_genres), dtype=torch.bool),
+        "directors_idx": torch.zeros((count, max_directors), dtype=torch.long),
+        "directors_mask": torch.zeros((count, max_directors), dtype=torch.bool),
+    }
+
+    for i, movie in enumerate(prehashed):
+        bank["id_idx"][i] = movie.id_idx
+        bank["year"][i] = movie.year
+
+        if movie.actors_idx:
+            end = len(movie.actors_idx)
+            bank["actors_idx"][i, :end] = torch.as_tensor(movie.actors_idx, dtype=torch.long)
+            bank["actors_mask"][i, :end] = True
+
+        if movie.genres_idx:
+            end = len(movie.genres_idx)
+            bank["genres_idx"][i, :end] = torch.as_tensor(movie.genres_idx, dtype=torch.long)
+            bank["genres_mask"][i, :end] = True
+
+        if movie.directors_idx:
+            end = len(movie.directors_idx)
+            bank["directors_idx"][i, :end] = torch.as_tensor(movie.directors_idx, dtype=torch.long)
+            bank["directors_mask"][i, :end] = True
+
+    return bank
+
+
+def collate_prehashed_bank(
+    movie_indices_batch: Sequence[Sequence[int]],
+    prehashed_bank: dict[str, torch.Tensor],
     device: torch.device | str = "cpu",
 ) -> dict[str, torch.Tensor]:
-    """Collate prehashed movies into padded index tensors + masks."""
-    if not movies_batch:
-        raise ValueError("movies_batch is empty; cannot collate.")
+    """Collate movie indices by selecting from a prehashed bank."""
+    if not movie_indices_batch:
+        raise ValueError("movie_indices_batch is empty; cannot collate.")
 
-    sizes = [len(movies) for movies in movies_batch]
+    sizes = [len(indices) for indices in movie_indices_batch]
     if any(size == 0 for size in sizes):
         raise ValueError("Each batch entry must contain at least one movie.")
     if len(set(sizes)) != 1:
         raise ValueError("All batch entries must contain the same number of movies.")
 
-    flat_movies = [movie for movies in movies_batch for movie in movies]
-    batch_size = len(flat_movies)
+    required_keys = (
+        "id_idx",
+        "year",
+        "actors_idx",
+        "actors_mask",
+        "genres_idx",
+        "genres_mask",
+        "directors_idx",
+        "directors_mask",
+    )
+    for key in required_keys:
+        if key not in prehashed_bank:
+            raise KeyError(f"prehashed_bank is missing required key: '{key}'.")
 
-    max_actors = max((len(movie.actors_idx) for movie in flat_movies), default=0)
-    max_genres = max((len(movie.genres_idx) for movie in flat_movies), default=0)
-    max_directors = max((len(movie.directors_idx) for movie in flat_movies), default=0)
+    flat_indices = [idx for indices in movie_indices_batch for idx in indices]
+    bank_device = prehashed_bank["id_idx"].device
+    idx_tensor = torch.as_tensor(flat_indices, dtype=torch.long, device=bank_device)
 
-    device = torch.device(device)
-    id_idx = torch.empty(batch_size, dtype=torch.long, device=device)
-    year = torch.empty(batch_size, dtype=torch.float32, device=device)
+    selected = {key: value.index_select(0, idx_tensor) for key, value in prehashed_bank.items()}
 
-    actors_idx = torch.zeros((batch_size, max_actors), dtype=torch.long, device=device)
-    actors_mask = torch.zeros((batch_size, max_actors), dtype=torch.bool, device=device)
-    genres_idx = torch.zeros((batch_size, max_genres), dtype=torch.long, device=device)
-    genres_mask = torch.zeros((batch_size, max_genres), dtype=torch.bool, device=device)
-    directors_idx = torch.zeros((batch_size, max_directors), dtype=torch.long, device=device)
-    directors_mask = torch.zeros((batch_size, max_directors), dtype=torch.bool, device=device)
+    target_device = torch.device(device)
+    if target_device != bank_device:
+        selected = {key: value.to(target_device) for key, value in selected.items()}
 
-    for i, movie in enumerate(flat_movies):
-        id_idx[i] = movie.id_idx
-        year[i] = movie.year
+    return selected
 
-        for j, actor_idx in enumerate(movie.actors_idx):
-            actors_idx[i, j] = actor_idx
-            actors_mask[i, j] = True
-
-        for j, genre_idx in enumerate(movie.genres_idx):
-            genres_idx[i, j] = genre_idx
-            genres_mask[i, j] = True
-
-        for j, director_idx in enumerate(movie.directors_idx):
-            directors_idx[i, j] = director_idx
-            directors_mask[i, j] = True
-
-    return {
-        "id_idx": id_idx,
-        "year": year,
-        "actors_idx": actors_idx,
-        "actors_mask": actors_mask,
-        "genres_idx": genres_idx,
-        "genres_mask": genres_mask,
-        "directors_idx": directors_idx,
-        "directors_mask": directors_mask,
-    }

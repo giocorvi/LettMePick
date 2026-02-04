@@ -6,7 +6,7 @@ from tqdm import tqdm
 
 import torch
 
-from src.data.prehash_v2 import PrehashedMovie, collate_prehashed_batch, prehash_movies
+from src.data.prehash_v2 import build_prehashed_bank, collate_prehashed_bank, prehash_movies
 
 @dataclass(frozen=True)
 class Movie:
@@ -26,9 +26,9 @@ def prepare_dataset(
     num_genre_buckets: int,
     num_director_buckets: int,
     verbose: bool = False,
-) -> list[PrehashedMovie]:
+) -> dict[str, torch.Tensor]:
     """
-    Creates a prehashed movie dataset and prepares the user ratings dict for faster access.
+    Creates a prehashed movie bank and prepares the user ratings dict for faster access.
 
     NOTE: This function modifies the user ratings dict in-place.
     
@@ -84,24 +84,28 @@ def prepare_dataset(
         user_ratings_dict[user_id]['movie_ids'] = new_movie_ids
         user_ratings_dict[user_id]['rating_vals'] = new_rating_vals
 
-    return prehash_movies(
+    prehashed = prehash_movies(
         final_movie_dataset,
         num_id_buckets=num_id_buckets,
         num_actor_buckets=num_actor_buckets,
         num_genre_buckets=num_genre_buckets,
         num_director_buckets=num_director_buckets,
     )
+    return build_prehashed_bank(prehashed)
 
 
 def get_train_batch(
     user_ratings_dict: dict[str, dict[str, list[int | str]]],
-    prehashed_dataset: list[PrehashedMovie],
+    prehashed_bank: dict[str, torch.Tensor],
     batch_size: int = 1,
     context_size: int = 64,
     target_size: int = 8,
     device: torch.device | str = "cpu",
 ) -> tuple[dict[str, torch.Tensor], torch.Tensor, dict[str, torch.Tensor], torch.Tensor]:
-    """Creates a training batch from prehashed movies and returns collated tensors."""
+    """Creates a training batch from prehashed movies and returns collated tensors.
+
+    prehashed_bank is used to gather tensors directly by index.
+    """
     if not user_ratings_dict:
         raise ValueError("user_ratings_dict is empty; cannot create batch.")
 
@@ -119,10 +123,10 @@ def get_train_batch(
     if user_context_length <= target_size:
         raise ValueError("Context length must be greater than target_size for all users.")
 
-    train_movies_batch: list[list[PrehashedMovie]] = []
     train_scores_batch: list[list[float]] = []
-    pred_movies_batch: list[list[PrehashedMovie]] = []
     pred_scores_batch: list[list[float]] = []
+    train_indices_batch: list[list[int]] = []
+    pred_indices_batch: list[list[int]] = []
 
     for user_id in batch_users:
         movie_ids = user_ratings_dict[user_id].get("movie_ids", [])
@@ -136,19 +140,19 @@ def get_train_batch(
         pred_positions = set(random.sample(chosen_positions, target_size))
         train_positions = [pos for pos in chosen_positions if pos not in pred_positions]
 
-        train_movies = [prehashed_dataset[movie_ids[pos]] for pos in train_positions]
-        train_scores = [float(rating_vals[pos]) for pos in train_positions]
-        pred_movies = [prehashed_dataset[movie_ids[pos]] for pos in pred_positions]
-        pred_scores = [float(rating_vals[pos]) for pos in pred_positions]
+        train_indices = [movie_ids[pos] for pos in train_positions]
+        pred_indices = [movie_ids[pos] for pos in pred_positions]
+        train_indices_batch.append(train_indices)
+        pred_indices_batch.append(pred_indices)
 
-        train_movies_batch.append(train_movies)
+        train_scores = [float(rating_vals[pos]) for pos in train_positions]
+        pred_scores = [float(rating_vals[pos]) for pos in pred_positions]
         train_scores_batch.append(train_scores)
-        pred_movies_batch.append(pred_movies)
         pred_scores_batch.append(pred_scores)
 
     device = torch.device(device)
-    context_batch = collate_prehashed_batch(train_movies_batch, device=device)
-    query_batch = collate_prehashed_batch(pred_movies_batch, device=device)
+    context_batch = collate_prehashed_bank(train_indices_batch, prehashed_bank, device=device)
+    query_batch = collate_prehashed_bank(pred_indices_batch, prehashed_bank, device=device)
     context_scores = torch.tensor(train_scores_batch, dtype=torch.float32, device=device)
     query_scores = torch.tensor(pred_scores_batch, dtype=torch.float32, device=device)
 
@@ -201,7 +205,7 @@ if __name__ == '__main__':
     movie_dataset = torch.load('/home/jcrows/torch_env/LettMePick/data/2026-batch/tests/sub-movie-dataset.pt', weights_only=False)
     users_ratings_dict = torch.load('/home/jcrows/torch_env/LettMePick/data/2026-batch/tests/sub-users-ratings.pt', weights_only=False)
 
-    movie_dataset = prepare_dataset(
+    prehashed_bank = prepare_dataset(
         users_ratings_dict,
         movie_dataset,
         num_id_buckets=1000,
