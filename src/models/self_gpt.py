@@ -3,7 +3,6 @@ import torch
 """
 TODO:
     - Add support for variable length sequences (padding + masking)
-    - Finish karpathy (GPT from encoder-decoder, transformer lecture from ViTs)
 """
 
 class SelfAttentionHead(torch.nn.Module):

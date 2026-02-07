@@ -24,6 +24,7 @@ class LettMePick_exp(torch.nn.Module):
         num_movie_attention_blocks: int = 1,
         num_self_attention_blocks: int = 1,
         num_cross_attention_blocks: int = 1,
+        mrl_margin: float = 0.1,
     ):
         """Initialize the model and configure encoders, attention blocks, and fusion layers.
 
@@ -39,6 +40,7 @@ class LettMePick_exp(torch.nn.Module):
             num_movie_attention_blocks: Count of masked self-attention blocks for movie tokens.
             num_self_attention_blocks: Count of self-attention blocks over the context set.
             num_cross_attention_blocks: Count of cross-attention blocks from query to context.
+            mrl_margin: The margin used for the MarginRanking loss.
             device: Device for model parameters and intermediate tensors.
         """
         super().__init__()
@@ -75,6 +77,8 @@ class LettMePick_exp(torch.nn.Module):
             torch.nn.Linear(model_embed_dim, 1),
             torch.nn.Sigmoid(),
         )
+
+        self.loss = torch.nn.MarginRankingLoss(margin=mrl_margin, reduction='none')
 
         # Fusion (add dropout??)
         self.fusion_block_a = torch.nn.Sequential(
@@ -154,7 +158,20 @@ class LettMePick_exp(torch.nn.Module):
         self,
         predictions: torch.Tensor,
         targets: torch.Tensor,
-        reduction: str = "mean",
     ) -> torch.Tensor:
-        """Compute regression loss for relevance scores in [0, 1]."""
-        return F.mse_loss(predictions, targets, reduction=reduction)
+        """Compute Masked Margin Ranking Loss"""
+        # NOTE: Might be nice at some point to track the percentage of "active" pairs.
+        query_size = predictions.shape[1]
+
+        combinations = torch.combinations(torch.arange(query_size, device=predictions.device))
+
+        mrl_targets = (targets[:, combinations[:, 0]] - targets[:, combinations[:, 1]]).sign()
+        preds_a, preds_b = predictions[:, combinations[:, 0]], predictions[:, combinations[:, 1]]
+
+        mask = mrl_targets != 0.0
+
+        denom = mask.sum().clamp_min(1.0)
+
+        masked_loss = (self.loss(preds_a, preds_b, mrl_targets) * mask).sum() / denom
+
+        return masked_loss
