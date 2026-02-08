@@ -175,3 +175,12 @@ class LettMePick_exp(torch.nn.Module):
         masked_loss = (self.loss(preds_a, preds_b, mrl_targets) * mask).sum() / denom
 
         return masked_loss
+    
+    def compute_mse_loss(
+        self,
+        predictions: torch.Tensor,
+        targets: torch.Tensor,
+        reduction: str = "mean",
+    ) -> torch.Tensor:
+        """Compute regression loss for relevance scores in [0, 1]."""
+        return F.mse_loss(predictions, targets, reduction=reduction)
