@@ -3,6 +3,8 @@
 Instead of concateneting the movie features with the scores, the ladder are projected 
 onto the same dimension and summed together (see `self.score_features_fusion`) 
 """
+from collections.abc import Iterable, Iterator
+
 import torch
 import torch.nn.functional as F
 
@@ -120,6 +122,58 @@ class LettMePick_exp(torch.nn.Module):
         
         return predictions
 
+    def context_cached_inference(
+        self,
+        context_movies: dict[str, torch.Tensor],
+        context_scores: torch.Tensor,
+        query_batches: Iterable[dict[str, torch.Tensor]],
+    ) -> Iterator[torch.Tensor]:
+        """Run inference by caching context states and yielding one query-batch result at a time.
+
+        query_batches must contain collated query dicts where each tensor has a flat first
+        dimension of batch_size * query_chunk_size for a fixed batch_size.
+        """
+        self.eval()
+
+        batch_size = int(context_scores.shape[0])
+        if batch_size <= 0:
+            raise ValueError("context_scores must have a positive batch dimension.")
+        if context_scores.ndim not in (2, 3):
+            raise ValueError(
+                f"context_scores must have shape [B, T] or [B, T, 1], got {context_scores.shape}."
+            )
+
+        self._assert_collated_movies_batch(context_movies, batch_size=batch_size)
+        context = self._encode_movies(context_movies, batch_size=batch_size)
+
+        if context_scores.shape[1] != context.shape[1]:
+            raise ValueError(
+                "context_scores length must match encoded context length, got "
+                f"{context_scores.shape[1]} and {context.shape[1]}."
+            )
+        if context_scores.ndim == 3 and context_scores.shape[2] != 1:
+            raise ValueError(
+                f"context_scores third dim must be 1 when 3D, got {context_scores.shape}."
+            )
+
+        context = self.score_features_fusion(context, context_scores)
+        for block in self.self_attention_blocks:
+            context = block(context)
+
+        with torch.inference_mode():
+            for query_batch in query_batches:
+                self._assert_collated_movies_batch(query_batch, batch_size=batch_size)
+                query = self._encode_movies(query_batch, batch_size=batch_size)
+
+                for block in self.cross_attention_blocks:
+                    query = block(query, context)
+
+                _, query_size = query.shape[0], query.shape[1]
+                predictions = self.final_block(
+                    query.reshape(batch_size * query_size, -1)
+                ).reshape((batch_size, query_size))
+                yield predictions
+
     def _encode_movies(
         self,
         movies_batch: dict[str, torch.Tensor],
@@ -143,6 +197,69 @@ class LettMePick_exp(torch.nn.Module):
         cls_embeddings = x[:, 0, :]
         movie_embeddings = self.movie_projection(cls_embeddings)
         return movie_embeddings.reshape(batch_size, context_size, -1)
+
+    def _assert_collated_movies_batch(
+        self,
+        movies_batch: dict[str, torch.Tensor],
+        batch_size: int,
+    ) -> None:
+        required_keys = (
+            "id_idx",
+            "year",
+            "actors_idx",
+            "actors_mask",
+            "genres_idx",
+            "genres_mask",
+            "directors_idx",
+            "directors_mask",
+        )
+        if not isinstance(movies_batch, dict):
+            raise TypeError(f"movies_batch must be a dict, got {type(movies_batch)}.")
+
+        for key in required_keys:
+            if key not in movies_batch:
+                raise KeyError(f"movies_batch is missing required key: '{key}'.")
+            if not isinstance(movies_batch[key], torch.Tensor):
+                raise TypeError(f"movies_batch['{key}'] must be a torch.Tensor.")
+            if movies_batch[key].ndim < 1:
+                raise ValueError(f"movies_batch['{key}'] must be at least 1D.")
+
+        flat_count = int(movies_batch["id_idx"].shape[0])
+        if flat_count <= 0:
+            raise ValueError("movies_batch is empty; cannot infer sequence length.")
+        if flat_count % batch_size != 0:
+            raise ValueError(
+                f"movies_batch flat size ({flat_count}) must be divisible by batch_size ({batch_size})."
+            )
+
+        id_device = movies_batch["id_idx"].device
+        for key in required_keys:
+            if int(movies_batch[key].shape[0]) != flat_count:
+                raise ValueError(
+                    f"movies_batch['{key}'] first dim must match id_idx ({flat_count}), "
+                    f"got {movies_batch[key].shape[0]}."
+                )
+            if movies_batch[key].device != id_device:
+                raise ValueError(
+                    f"movies_batch['{key}'] must be on device {id_device}, "
+                    f"got {movies_batch[key].device}."
+                )
+
+        expected_dtypes = {
+            "id_idx": torch.long,
+            "year": torch.float32,
+            "actors_idx": torch.long,
+            "actors_mask": torch.bool,
+            "genres_idx": torch.long,
+            "genres_mask": torch.bool,
+            "directors_idx": torch.long,
+            "directors_mask": torch.bool,
+        }
+        for key, dtype in expected_dtypes.items():
+            if movies_batch[key].dtype != dtype:
+                raise TypeError(
+                    f"movies_batch['{key}'] must have dtype {dtype}, got {movies_batch[key].dtype}."
+                )
 
     def freeze_encoder(self) -> None:
         """Freeze movie encoder parameters to avoid gradient computation."""
