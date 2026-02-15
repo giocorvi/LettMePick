@@ -27,6 +27,7 @@ class LettMePick_exp(torch.nn.Module):
         num_self_attention_blocks: int = 1,
         num_cross_attention_blocks: int = 1,
         mrl_margin: float = 0.1,
+        score_embedding_mode: str = 'fusion',
     ):
         """Initialize the model and configure encoders, attention blocks, and fusion layers.
 
@@ -42,10 +43,13 @@ class LettMePick_exp(torch.nn.Module):
             num_movie_attention_blocks: Count of masked self-attention blocks for movie tokens.
             num_self_attention_blocks: Count of self-attention blocks over the context set.
             num_cross_attention_blocks: Count of cross-attention blocks from query to context.
+            score_embedding_mode: Method to merge scores with movie embeddings. Options are 'fusion' or 'concat'.
             mrl_margin: The margin used for the MarginRanking loss.
-            device: Device for model parameters and intermediate tensors.
         """
         super().__init__()
+
+        assert score_embedding_mode in ['fusion', 'concat']
+        self.score_embedding_mode = score_embedding_mode
 
         self.encoder = MovieEncoder(
             feature_size=feature_size,
@@ -62,7 +66,10 @@ class LettMePick_exp(torch.nn.Module):
             for _ in range(num_movie_attention_blocks)
         )
 
-        self.movie_projection = torch.nn.Linear(movie_token_dim, model_embed_dim)
+        self.movie_projection = torch.nn.Linear(
+            movie_token_dim,
+            model_embed_dim if score_embedding_mode == 'fusion' else (model_embed_dim - 1)
+        )
 
         self.self_attention_blocks = torch.nn.ModuleList(
             SelfAttentionBlock(embed_dim=model_embed_dim, num_heads=num_attention_heads)
@@ -98,6 +105,17 @@ class LettMePick_exp(torch.nn.Module):
             return self.fusion_block_proj(features)
         else:
             raise IndexError(f"Scores has shape: {scores.shape}")
+        
+
+    def score_features_concat(self, features: torch.Tensor, scores: torch.Tensor):
+        assert features.ndim == 3 # B, T, D
+        B, T, _ = features.shape
+        if scores.ndim == 2: # [B, T]
+            return torch.cat((features, scores.unsqueeze(-1)), dim=-1)
+        elif scores.ndim == 3: # [B, T, 1]
+            return torch.cat((features, scores), dim=-1)
+        else:
+            raise IndexError(f"Scores has shape: {scores.shape}")
 
     def forward(
         self,
@@ -109,7 +127,16 @@ class LettMePick_exp(torch.nn.Module):
         context = self._encode_movies(context_movies, batch_size=batch_size)
         query = self._encode_movies(query_movies, batch_size=batch_size)
 
-        context = self.score_features_fusion(context, context_scores)
+        context = (
+            self.score_features_fusion(context, context_scores) if self.score_embedding_mode == 'fusion'
+            else self.score_features_concat(context, context_scores)
+        )
+
+        query_size = query.shape[1]
+        query = (
+            query if self.score_embedding_mode == 'fusion'
+            else self.score_features_concat(query, torch.zeros_like(query[:, :, 0]))
+        )
 
         for block in self.self_attention_blocks:
             context = block(context)
@@ -117,7 +144,6 @@ class LettMePick_exp(torch.nn.Module):
         for block in self.cross_attention_blocks:
             query = block(query, context)
 
-        batch_size, query_size = context.shape[0], query.shape[1]
         predictions = self.final_block(query.view(batch_size * query_size, -1)).reshape((batch_size, query_size))
         
         return predictions
@@ -156,7 +182,11 @@ class LettMePick_exp(torch.nn.Module):
                 f"context_scores third dim must be 1 when 3D, got {context_scores.shape}."
             )
 
-        context = self.score_features_fusion(context, context_scores)
+        context = (
+            self.score_features_fusion(context, context_scores) if self.score_embedding_mode == 'fusion'
+            else self.score_features_concat(context, context_scores)
+        )
+
         for block in self.self_attention_blocks:
             context = block(context)
 
@@ -165,10 +195,15 @@ class LettMePick_exp(torch.nn.Module):
                 self._assert_collated_movies_batch(query_batch, batch_size=batch_size)
                 query = self._encode_movies(query_batch, batch_size=batch_size)
 
+                _, query_size = query.shape[0], query.shape[1]
+                query = (
+                    query if self.score_embedding_mode == 'fusion'
+                    else self.score_features_concat(query, torch.zeros((batch_size, query_size, 1), device=query.device))
+                )
+
                 for block in self.cross_attention_blocks:
                     query = block(query, context)
 
-                _, query_size = query.shape[0], query.shape[1]
                 predictions = self.final_block(
                     query.reshape(batch_size * query_size, -1)
                 ).reshape((batch_size, query_size))
