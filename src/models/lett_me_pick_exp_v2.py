@@ -306,7 +306,7 @@ class LettMePick_exp(torch.nn.Module):
         for param in self.encoder.parameters():
             param.requires_grad = True
 
-    def compute_loss(
+    def compute_mmr_loss(
         self,
         predictions: torch.Tensor,
         targets: torch.Tensor,
