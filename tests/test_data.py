@@ -1,33 +1,147 @@
-import pandas as pd
+import random
+
 import torch
 
-from src.data.data import get_user_ratings_dict
+from src.data.data import get_train_batch, prepare_dataset, split_user_ratings_dict
 
 
-def test_get_user_ratings_dict_warns_and_drops_missing_ids(capsys) -> None:
-    raw = pd.DataFrame(
-        {
-            "user_id": [1, 1, 2],
-            "movie_id": ["m1", "unknown", "m2"],
-            "rating_val": [8.0, 9.0, 7.5],
-        }
+def _raw_movies() -> dict[str, dict[str, object]]:
+    """ Create representative raw metadata for dataset tests.
+
+    Args:
+        None.
+
+    Returns:
+        Raw metadata keyed by movie identifier.
+    """
+    return {
+        "m1": {
+            "year_released": 1990,
+            "letterboxd_genres": ["Drama"],
+            "actors": ["Actor A"],
+            "director": ["Director A"],
+        },
+        "m2": {
+            "year_released": 2000,
+            "letterboxd_genres": ["Comedy"],
+            "actors": ["Actor B"],
+            "director": ["Director B"],
+        },
+        "m3": {
+            "year_released": 2010,
+            "letterboxd_genres": ["Action"],
+            "actors": [],
+            "director": ["Director C"],
+        },
+        "missing-year": {
+            "year_released": None,
+            "letterboxd_genres": ["Drama"],
+        },
+    }
+
+
+def _prepare(
+    ratings: dict[str, dict[str, list[int | str]]],
+) -> dict[str, torch.Tensor]:
+    """ Prepare a test tensor bank and remap the supplied ratings.
+
+    Args:
+        ratings: Raw user ratings to prepare in place.
+
+    Returns:
+        The recreated hashed movie tensor bank.
+    """
+    return prepare_dataset(
+        ratings,
+        _raw_movies(),
+        num_id_buckets=32,
+        num_actor_buckets=16,
+        num_genre_buckets=8,
+        num_director_buckets=8,
     )
-    movie_ids = ["m1", "m2"]
 
-    result = get_user_ratings_dict(raw, movie_ids, lambda x: torch.tensor(x / 10.0))
 
-    captured = capsys.readouterr()
-    assert "Warning: Dropping 1 ratings with unknown movie ids out of 3 total." in captured.out
+def test_prepare_dataset_recreates_model_input_and_remaps_ratings() -> None:
+    """ Verify raw metadata becomes model-compatible tensors and ratings.
 
-    assert 1 in result
-    assert 2 in result
-    assert len(result[1]) == 1
-    assert len(result[2]) == 1
+    Args:
+        None.
 
-    idx, rating = result[1][0]
-    assert idx == 0
-    torch.testing.assert_close(rating, torch.tensor(0.8))
+    Returns:
+        None.
+    """
+    ratings: dict[str, dict[str, list[int | str]]] = {
+        "user-1": {
+            "movie_ids": ["m1", "unknown", "m3", "missing-year"],
+            "rating_vals": [8, 9, 6, 7],
+        }
+    }
 
-    idx, rating = result[2][0]
-    assert idx == 1
-    torch.testing.assert_close(rating, torch.tensor(0.75))
+    bank = _prepare(ratings)
+
+    assert bank["id_idx"].shape == (3,)
+    torch.testing.assert_close(bank["year"], torch.tensor([1990.0, 2000.0, 2010.0]))
+    assert ratings["user-1"]["movie_ids"] == [0, 2]
+    assert ratings["user-1"]["rating_vals"] == [0.8, 0.6]
+
+
+def test_get_train_batch_returns_collated_context_and_query() -> None:
+    """ Verify training batches contain aligned context and query tensors.
+
+    Args:
+        None.
+
+    Returns:
+        None.
+    """
+    ratings: dict[str, dict[str, list[int | str]]] = {
+        "user-1": {
+            "movie_ids": ["m1", "m2", "m3"],
+            "rating_vals": [8, 7, 6],
+        },
+        "user-2": {
+            "movie_ids": ["m1", "m2", "m3"],
+            "rating_vals": [4, 5, 9],
+        },
+    }
+    bank = _prepare(ratings)
+    random.seed(7)
+
+    context, context_scores, query, query_scores = get_train_batch(
+        ratings,
+        bank,
+        batch_size=2,
+        context_size=2,
+        target_size=1,
+    )
+
+    assert context["id_idx"].shape == (4,)
+    assert query["id_idx"].shape == (2,)
+    assert context_scores.shape == (2, 2)
+    assert query_scores.shape == (2, 1)
+    assert context_scores.dtype == torch.float32
+
+
+def test_split_user_ratings_is_seeded_and_disjoint() -> None:
+    """ Verify seeded user splits are reproducible and disjoint.
+
+    Args:
+        None.
+
+    Returns:
+        None.
+    """
+    ratings = {
+        f"user-{index}": {"movie_ids": [0], "rating_vals": [0.5]}
+        for index in range(10)
+    }
+
+    first = split_user_ratings_dict(ratings, test_ratio=0.2, val_ratio=0.3, seed=42)
+    second = split_user_ratings_dict(ratings, test_ratio=0.2, val_ratio=0.3, seed=42)
+
+    assert first == second
+    train, validation, test = first
+    assert (len(train), len(validation), len(test)) == (5, 3, 2)
+    assert set(train).isdisjoint(validation)
+    assert set(train).isdisjoint(test)
+    assert set(validation).isdisjoint(test)

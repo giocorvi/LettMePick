@@ -1,93 +1,117 @@
+from dataclasses import dataclass
 import random
-from collections import defaultdict
-from pathlib import Path
-from typing import Callable
+from typing import Any
 
-import pandas as pd
 import torch
-from pandas.core.frame import DataFrame
-from tqdm import tqdm
 
-from src.data.movie_embedder import FeatureConfig, MovieEmbedder
-
-"""
-TODO:
-    - Re-implement get_train batch with cross attension design in mind
-"""
-
-def get_user_ratings_dict(
-    raw_ratings_data: DataFrame,
-    movie_ids: list[str],
-    normalization_function: Callable,
-) -> dict[str, list[tuple[int, float]]]:
-    id_to_idx = {movie_id: idx for idx, movie_id in enumerate(movie_ids)}
-    user_ratings_dict: dict[str, list[tuple[int, float]]] = defaultdict(list)
-    total_count = 0
-    missing_count = 0
-
-    rows = raw_ratings_data[["user_id", "movie_id", "rating_val"]].itertuples(index=False, name=None)
-    for user_id, movie_id, rating_val in tqdm(rows, total=len(raw_ratings_data), desc="Building user ratings dict"):
-        total_count += 1
-        movie_idx = id_to_idx.get(movie_id)
-        if movie_idx is None:
-            missing_count += 1
-            continue
-
-        rating_norm = normalization_function(rating_val)
-        user_ratings_dict[user_id].append((int(movie_idx), rating_norm))
-
-    if missing_count:
-        print(f"Warning: Dropping {missing_count} ratings with unknown movie ids out of {total_count} total.")
-
-    return dict(user_ratings_dict)
+from src.data.prehash import build_prehashed_bank, collate_prehashed_bank, prehash_movies
 
 
-def iter_user_ratings_shards(
-    raw_ratings_data: DataFrame,
-    movie_ids: list[str],
-    normalization_function: Callable,
-    max_users_per_shard: int = 100_000,
-):
-    """Yield user->ratings shards to keep peak memory bounded.
+@dataclass(frozen=True)
+class Movie:
+    id: str
+    year: int
+    genres: list[str]
+    actors: list[str]
+    directors: list[str]
 
-    Each yielded shard is a dict[user_id] -> list[(movie_idx, norm_rating)], plus
-    per-shard missing/total counts so the caller can log warnings.
+
+def prepare_dataset(
+    user_ratings_dict: dict[str, dict[str, list[int | str]]],
+    movie_dataset: dict[str, dict[str, Any]],
+    num_id_buckets: int,
+    num_actor_buckets: int,
+    num_genre_buckets: int,
+    num_director_buckets: int,
+    verbose: bool = False,
+) -> dict[str, torch.Tensor]:
+    """ Build a hashed movie bank and align user ratings with its rows.
+
+    Args:
+        user_ratings_dict: User movie identifiers and ten-point rating values; updated
+            in place with bank indices and normalized ratings.
+        movie_dataset: Movie metadata keyed by movie identifier.
+        num_id_buckets: Number of hash buckets for movie identifiers.
+        num_actor_buckets: Number of hash buckets for actor names.
+        num_genre_buckets: Number of hash buckets for genres.
+        num_director_buckets: Number of hash buckets for director names.
+        verbose: Whether to report ratings whose movies are omitted.
+
+    Returns:
+        A tensor bank containing hashed movie features and masks.
     """
-    id_to_idx = {movie_id: idx for idx, movie_id in enumerate(movie_ids)}
-    shard: dict[str, list[tuple[int, torch.Tensor]]] = defaultdict(list)
-    shard_missing = 0
-    shard_total = 0
+    movie_id_to_index: dict[str, int] = {}
+    final_movie_dataset: list[Movie] = []
 
-    rows = raw_ratings_data[["user_id", "movie_id", "rating_val"]].itertuples(index=False, name=None)
-    for user_id, movie_id, rating_val in tqdm(rows, total=len(raw_ratings_data), desc="Building user ratings shards"):
-        shard_total += 1
-        movie_idx = id_to_idx.get(movie_id)
-        if movie_idx is None:
-            shard_missing += 1
+    for movie_id, movie_info in movie_dataset.items():
+        if movie_info.get("year_released") is None:
             continue
 
-        rating_norm = normalization_function(rating_val)
-        shard[user_id].append((int(movie_idx), rating_norm))
+        genres = movie_info.get("letterboxd_genres", [])
+        genres = [g.lower() for g in genres]
 
-        if len(shard) >= max_users_per_shard:
-            yield dict(shard), shard_missing, shard_total
-            shard = defaultdict(list)
-            shard_missing = 0
-            shard_total = 0
+        final_movie_dataset.append(
+            Movie(
+                id=movie_id,
+                year=movie_info["year_released"],
+                genres=genres,
+                actors=movie_info.get("actors", []),
+                directors=movie_info.get("director", []),
+            )
+        )
+        movie_id_to_index[movie_id] = len(final_movie_dataset) - 1
 
-    if shard:
-        yield dict(shard), shard_missing, shard_total
+    for user_id in user_ratings_dict:
+        movie_ids = user_ratings_dict[user_id]["movie_ids"]
+        rating_vals = user_ratings_dict[user_id]["rating_vals"]
+        new_movie_ids: list[int] = []
+        new_rating_vals: list[int | str] = []
+
+        for movie_id, rating_val in zip(movie_ids, rating_vals):
+            movie_index = movie_id_to_index.get(movie_id)
+            if movie_index is None:
+                if verbose:
+                    print(
+                        f"Warning: movie_id {movie_id} not found in dataset for user {user_id}; skipping."
+                    )
+                continue
+            new_movie_ids.append(movie_index)
+            new_rating_vals.append(float(rating_val) / 10.0)
+
+        user_ratings_dict[user_id]["movie_ids"] = new_movie_ids
+        user_ratings_dict[user_id]["rating_vals"] = new_rating_vals
+
+    prehashed = prehash_movies(
+        final_movie_dataset,
+        num_id_buckets=num_id_buckets,
+        num_actor_buckets=num_actor_buckets,
+        num_genre_buckets=num_genre_buckets,
+        num_director_buckets=num_director_buckets,
+    )
+    return build_prehashed_bank(prehashed)
 
 
 def get_train_batch(
-    user_ratings_dict: dict[str, list[tuple[int, torch.Tensor]]],
-    movie_embeddings: torch.Tensor,
+    user_ratings_dict: dict[str, dict[str, list[int | str]]],
+    prehashed_bank: dict[str, torch.Tensor],
     batch_size: int = 1,
     context_size: int = 64,
     target_size: int = 8,
     device: torch.device | str = "cpu",
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Creates a training batch."""
+) -> tuple[dict[str, torch.Tensor], torch.Tensor, dict[str, torch.Tensor], torch.Tensor]:
+    """ Sample context and query movies for a training batch.
+
+    Args:
+        user_ratings_dict: Prepared user ratings indexed into ``prehashed_bank``.
+        prehashed_bank: Hashed movie feature tensors and masks.
+        batch_size: Number of users to sample.
+        context_size: Maximum number of rated context movies per user.
+        target_size: Number of held-out query movies per user.
+        device: Device receiving the collated tensors.
+
+    Returns:
+        Context features, context scores, query features, and query scores.
+    """
     if not user_ratings_dict:
         raise ValueError("user_ratings_dict is empty; cannot create batch.")
 
@@ -97,7 +121,7 @@ def get_train_batch(
     else:
         batch_users = random.choices(users, k=batch_size)
 
-    user_lengths = [len(user_ratings_dict[u]) for u in batch_users]
+    user_lengths = [len(user_ratings_dict[u].get("movie_ids", [])) for u in batch_users]
     if any(length <= target_size for length in user_lengths):
         raise ValueError("At least one user has too few ratings for the requested target_size.")
 
@@ -105,45 +129,89 @@ def get_train_batch(
     if user_context_length <= target_size:
         raise ValueError("Context length must be greater than target_size for all users.")
 
-    train_embeddings: list[torch.Tensor] = []
-    train_scores: list[torch.Tensor] = []
-    pred_embeddings: list[torch.Tensor] = []
-    pred_scores: list[torch.Tensor] = []
+    train_scores_batch: list[list[float]] = []
+    pred_scores_batch: list[list[float]] = []
+    train_indices_batch: list[list[int]] = []
+    pred_indices_batch: list[list[int]] = []
 
     for user_id in batch_users:
-        user_ratings = user_ratings_dict[user_id]
+        movie_ids = user_ratings_dict[user_id].get("movie_ids", [])
+        rating_vals = user_ratings_dict[user_id].get(
+            "rating_val", user_ratings_dict[user_id].get("rating_vals", [])
+        )
+        if len(movie_ids) != len(rating_vals):
+            raise ValueError(f"movie_ids and rating values length mismatch for user {user_id}.")
 
-        movies_in_context = random.sample(user_ratings, user_context_length)
-        pred_movies = random.sample(movies_in_context, target_size)
-        train_movies = [movie for movie in movies_in_context if movie not in pred_movies]
+        chosen_positions = random.sample(range(len(movie_ids)), user_context_length)
+        pred_positions = set(random.sample(chosen_positions, target_size))
+        train_positions = [pos for pos in chosen_positions if pos not in pred_positions]
 
-        train_movies_ids = torch.tensor([m[0] for m in train_movies], dtype=torch.long)
-        train_movies_scores = torch.tensor([m[1] for m in train_movies]).to(dtype=torch.float)
-        pred_movies_ids = torch.tensor([m[0] for m in pred_movies], dtype=torch.long)
-        pred_movies_scores = torch.tensor([m[1] for m in pred_movies]).to(dtype=torch.float)
+        train_indices = [movie_ids[pos] for pos in train_positions]
+        pred_indices = [movie_ids[pos] for pos in pred_positions]
+        train_indices_batch.append(train_indices)
+        pred_indices_batch.append(pred_indices)
 
-        train_embeddings.append(movie_embeddings[train_movies_ids])
-        train_scores.append(train_movies_scores)
-        pred_embeddings.append(movie_embeddings[pred_movies_ids])
-        pred_scores.append(pred_movies_scores)
+        train_scores = [float(rating_vals[pos]) for pos in train_positions]
+        pred_scores = [float(rating_vals[pos]) for pos in pred_positions]
+        train_scores_batch.append(train_scores)
+        pred_scores_batch.append(pred_scores)
 
     device = torch.device(device)
-    train_movie_embeddings = torch.stack(train_embeddings).to(device)
-    train_movies_scores = torch.stack(train_scores).to(device)
-    pred_movie_embeddings = torch.stack(pred_embeddings).to(device)
-    pred_movies_scores = torch.stack(pred_scores).to(device)
+    context_batch = collate_prehashed_bank(train_indices_batch, prehashed_bank, device=device)
+    query_batch = collate_prehashed_bank(pred_indices_batch, prehashed_bank, device=device)
+    context_scores = torch.tensor(train_scores_batch, dtype=torch.float32, device=device)
+    query_scores = torch.tensor(pred_scores_batch, dtype=torch.float32, device=device)
 
-    return (train_movie_embeddings, train_movies_scores, pred_movie_embeddings, pred_movies_scores)
+    return (context_batch, context_scores, query_batch, query_scores)
 
 
-if __name__ == "__main__":
-    ratings_data = pd.read_csv('data/ratings_subset.csv', lineterminator='\n')
-    movie_dataset = torch.load('data/subset_movie_dataset-id-pc-yr.pt')
+def split_user_ratings_dict(
+    user_ratings_dict: dict[str, dict[str, list[int | str]]],
+    test_ratio: float,
+    val_ratio: float = 0.0,
+    seed: int | None = None,
+) -> tuple[
+    dict[str, dict[str, list[int | str]]],
+    dict[str, dict[str, list[int | str]]],
+    dict[str, dict[str, list[int | str]]],
+]:
+    """ Split prepared users into train, validation, and test mappings.
 
-    user_ratings_dict = get_user_ratings_dict(
-        ratings_data,
-        movie_dataset['ids'],
-        lambda x: torch.tensor(x / 10.0, dtype=torch.float)
-    )
+    Args:
+        user_ratings_dict: Prepared ratings keyed by user identifier.
+        test_ratio: Fraction of users assigned to the test mapping.
+        val_ratio: Fraction of users assigned to the validation mapping.
+        seed: Optional seed used to shuffle users reproducibly.
 
-    get_train_batch(user_ratings_dict, movie_dataset['data'])
+    Returns:
+        Train, validation, and test user-rating mappings.
+    """
+    if not 0 <= test_ratio <= 1:
+        raise ValueError("test_ratio must be between 0 and 1.")
+    if not 0 <= val_ratio <= 1:
+        raise ValueError("val_ratio must be between 0 and 1.")
+    if test_ratio + val_ratio > 1:
+        raise ValueError("test_ratio + val_ratio must be <= 1.")
+
+    rng = random.Random(seed)
+    train_dict: dict[str, dict[str, list[int | str]]] = {}
+    val_dict: dict[str, dict[str, list[int | str]]] = {}
+    test_dict: dict[str, dict[str, list[int | str]]] = {}
+
+    user_ids = list(user_ratings_dict.keys())
+    rng.shuffle(user_ids)
+
+    test_count = int(len(user_ids) * test_ratio)
+    val_count = int(len(user_ids) * val_ratio)
+    test_users = set(user_ids[:test_count])
+    val_users = set(user_ids[test_count : test_count + val_count])
+
+    for user_id, user_data in user_ratings_dict.items():
+        if user_id in test_users:
+            test_dict[user_id] = user_data
+        elif user_id in val_users:
+            val_dict[user_id] = user_data
+        else:
+            train_dict[user_id] = user_data
+
+    return train_dict, val_dict, test_dict

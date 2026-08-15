@@ -1,1 +1,1 @@
-"""Top-level package for LettMePick."""
+""" Top-level package for LettMePick."""

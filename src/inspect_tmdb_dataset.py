@@ -1,4 +1,4 @@
-"""Inspect the TMDB v11 movie dataset."""
+""" Inspect the TMDB v11 movie dataset."""
 
 from __future__ import annotations
 
@@ -31,7 +31,14 @@ class TMDBStats:
 
 
 def inspect_tmdb_dataset(data_path: Path = DATA_PATH) -> TMDBStats:
-    """Load TMDB v11 dataset and print useful summary information."""
+    """ Load and summarize the TMDB v11 dataset.
+
+    Args:
+        data_path: CSV file containing TMDB movie records.
+
+    Returns:
+        Aggregated statistics for the TMDB dataset.
+    """
     if not data_path.exists():
         raise FileNotFoundError(f"Missing TMDB dataset at {data_path}")
 
@@ -93,6 +100,14 @@ def inspect_tmdb_dataset(data_path: Path = DATA_PATH) -> TMDBStats:
 
 
 def _parse_list(raw_value: str | None) -> Sequence[str]:
+    """ Parse a JSON or comma-separated list value.
+
+    Args:
+        raw_value: Serialized list value, or ``None``.
+
+    Returns:
+        Parsed and trimmed string values.
+    """
     if not raw_value:
         return ()
     stripped = raw_value.strip()
@@ -108,6 +123,15 @@ def _parse_list(raw_value: str | None) -> Sequence[str]:
 
 
 def _maybe_append_float(raw_value: str | None, target: List[float]) -> None:
+    """ Append a valid floating-point value to a collection.
+
+    Args:
+        raw_value: Candidate floating-point string.
+        target: Collection updated when conversion succeeds.
+
+    Returns:
+        None.
+    """
     try:
         if raw_value:
             target.append(float(raw_value))
@@ -116,6 +140,15 @@ def _maybe_append_float(raw_value: str | None, target: List[float]) -> None:
 
 
 def _maybe_append_year(raw_value: str | None, target: List[int]) -> None:
+    """ Extract and append a valid year from a date string.
+
+    Args:
+        raw_value: Candidate date beginning with a four-digit year.
+        target: Collection updated when conversion succeeds.
+
+    Returns:
+        None.
+    """
     if not raw_value:
         return
     try:
@@ -126,6 +159,14 @@ def _maybe_append_year(raw_value: str | None, target: List[int]) -> None:
 
 
 def _print_stats(stats: TMDBStats) -> None:
+    """ Print TMDB statistics in a readable format.
+
+    Args:
+        stats: Aggregated TMDB statistics to display.
+
+    Returns:
+        None.
+    """
     print("TMDB v11 dataset summary")
     print("------------------------")
     print(f"Columns: {', '.join(stats.column_names)}")

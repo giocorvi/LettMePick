@@ -1,4 +1,4 @@
-"""Utilities for inspecting the exported ratings data."""
+""" Utilities for inspecting the exported ratings data."""
 
 from __future__ import annotations
 
@@ -30,7 +30,17 @@ def inspect_ratings(
     sample_users: int = 5,
     random_state: int | None = None,
 ) -> RatingsStats:
-    """Load the ratings CSV, print summary info, and dump a subset."""
+    """ Summarize ratings and write a sample containing selected users.
+
+    Args:
+        data_path: CSV file containing exported ratings.
+        subset_path: Destination for the sampled ratings CSV.
+        sample_users: Maximum number of users to sample.
+        random_state: Optional seed used for reproducible sampling.
+
+    Returns:
+        Aggregated statistics for the ratings dataset.
+    """
     if not data_path.exists():
         raise FileNotFoundError(f"Missing ratings export at {data_path}")
 
@@ -69,6 +79,16 @@ def inspect_ratings(
 def _sample_users(
     df: pd.DataFrame, sample_size: int, random_state: int | None
 ) -> tuple[pd.DataFrame, List[str]]:
+    """ Select complete rating histories for a sample of users.
+
+    Args:
+        df: Ratings dataframe to sample.
+        sample_size: Maximum number of distinct users to select.
+        random_state: Optional seed used for reproducible sampling.
+
+    Returns:
+        The sampled rows and selected user identifiers.
+    """
     if "user_id" not in df.columns:
         return df.head(0), []
 
@@ -85,6 +105,15 @@ def _sample_users(
 
 
 def _write_subset(subset_path: Path, subset_df: pd.DataFrame) -> None:
+    """ Persist a sampled ratings dataframe as CSV.
+
+    Args:
+        subset_path: Destination CSV path.
+        subset_df: Sampled ratings to write.
+
+    Returns:
+        None.
+    """
     subset_path.parent.mkdir(parents=True, exist_ok=True)
     subset_df.to_csv(subset_path, index=False)
 
@@ -95,6 +124,17 @@ def _print_stats(
     subset_df: pd.DataFrame,
     sampled_users: List[str],
 ) -> None:
+    """ Print ratings statistics and sample details.
+
+    Args:
+        stats: Aggregated ratings statistics.
+        subset_path: Path containing the sampled ratings.
+        subset_df: Sampled ratings dataframe.
+        sampled_users: User identifiers included in the sample.
+
+    Returns:
+        None.
+    """
     print("Ratings export summary")
     print("----------------------")
     print(f"Columns: {', '.join(stats.column_names)}")

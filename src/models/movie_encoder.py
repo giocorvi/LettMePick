@@ -1,64 +1,12 @@
-"""Movie ecoder models."""
+""" Movie encoder for hashed metadata features."""
 
 from __future__ import annotations
 
 import torch
 
 
-class SimpleMovieEncoder(torch.nn.Module):
-    """Encodes an embedded movie into a single combined representation."""
-    def __init__(
-        self,
-        embedding_dim: int,
-        num_features: int,
-        hidden_size: int,
-        output_size: int,
-        num_layers: int = 2,
-    ):
-        super().__init__()
-
-        input_size = embedding_dim * num_features
-
-        if num_layers <= 0:
-            raise ValueError("num_layers must be positive")
-
-        layers = []
-        current_dim = input_size
-        for layer_idx in range(num_layers):
-            next_dim = output_size if layer_idx == num_layers - 1 else hidden_size
-            linear = torch.nn.Linear(current_dim, next_dim)
-
-            if layer_idx == num_layers - 1:
-                layers.append(torch.nn.Sequential(linear))
-            else:
-                layers.append(torch.nn.Sequential(linear, torch.nn.ReLU()))
-
-            current_dim = next_dim
-
-        self.model = torch.nn.ModuleList(layers)
-    
-    def forward(self, movie_embeddings: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            movie_embeddings: tensor shaped (batch, context_size, num_features, embedding_dim)
-
-        Returns:
-            Tensor shaped (batch, context_size, output_size)
-        """
-        batch_size, context_size = movie_embeddings.shape[0], movie_embeddings.shape[1]
-
-        # collapse features/embedding dims -> (batch * context, num_features * embedding_dim)
-        x = movie_embeddings.view(batch_size * context_size, -1)
-
-        # sequentially map flattened embeddings into output space
-        for layer in self.model:
-            x = layer(x)
-
-        return x.reshape((batch_size, context_size, -1))
-
-
 class MovieEncoder(torch.nn.Module):
-    """Encodes an embedded movie into a single combined representation."""
+    """ Encode a movie's hashed metadata as a masked token sequence."""
     def __init__(
         self,
         feature_size: int,
@@ -68,6 +16,19 @@ class MovieEncoder(torch.nn.Module):
         num_genre_buckets: int,
         num_director_buckets: int,
     ):
+        """ Initialize feature embeddings and learnable prefix tokens.
+
+        Args:
+            feature_size: Width of each embedded feature value.
+            prefix_size: Width of the learned feature-type prefix.
+            num_id_buckets: Number of movie-identifier buckets.
+            num_actor_buckets: Number of actor buckets.
+            num_genre_buckets: Number of genre buckets.
+            num_director_buckets: Number of director buckets.
+
+        Returns:
+            None.
+        """
         super().__init__()
 
         if feature_size <= 0:
@@ -99,10 +60,25 @@ class MovieEncoder(torch.nn.Module):
         self.cls_token = torch.nn.Parameter(torch.zeros(prefix_size + feature_size))
 
     def forward(self, batch: dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
-        """Encode a pre-collated movie batch (hashed indices + masks)."""
+        """ Encode a collated movie batch as tokens and an attention mask.
+
+        Args:
+            batch: Hashed feature tensors and masks for flattened movies.
+
+        Returns:
+            Encoded movie tokens and their validity mask.
+        """
         return self._encode_collated(batch)
 
     def _encode_collated(self, batch: dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
+        """ Assemble prefixed tokens from collated hashed features.
+
+        Args:
+            batch: Hashed feature tensors and masks for flattened movies.
+
+        Returns:
+            Encoded feature tokens and their validity mask.
+        """
         device = self.id_embedding.weight.device
 
         id_idx = batch["id_idx"]
@@ -122,6 +98,16 @@ class MovieEncoder(torch.nn.Module):
             prefix: torch.Tensor,
             mask: torch.Tensor | None = None,
         ) -> torch.Tensor:
+            """ Prepend a feature-type vector and apply an optional mask.
+
+            Args:
+                embedded: Embedded values for one feature type.
+                prefix: Learned prefix identifying the feature type.
+                mask: Optional validity mask for padded values.
+
+            Returns:
+                Prefixed feature tokens with invalid positions zeroed.
+            """
             if embedded.ndim == 2:
                 embedded = embedded.unsqueeze(1)
             prefixed = torch.cat(
@@ -182,6 +168,15 @@ class MovieEncoder(torch.nn.Module):
         return embeddings, mask
 
     def _validate_bucket_count(self, count: int, name: str) -> int:
+        """ Validate and return a positive embedding bucket count.
+
+        Args:
+            count: Candidate bucket count.
+            name: Parameter name used in validation errors.
+
+        Returns:
+            The validated bucket count.
+        """
         if count <= 0:
             raise ValueError(f"{name} must be positive")
         return count

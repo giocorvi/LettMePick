@@ -7,7 +7,7 @@ from typing import Sequence, TYPE_CHECKING
 import torch
 
 if TYPE_CHECKING:
-    from src.data_v2.data import Movie
+    from src.data.data import Movie
 
 
 @dataclass(frozen=True)
@@ -24,6 +24,16 @@ def _hash_to_bucket(
     num_buckets: int,
     cache: dict[tuple[str | int, int], int],
 ) -> int:
+    """ Map a feature value to a deterministic hash bucket.
+
+    Args:
+        value: Feature value to hash.
+        num_buckets: Number of available hash buckets.
+        cache: Per-call cache of previously computed bucket assignments.
+
+    Returns:
+        The zero-based bucket index.
+    """
     cache_key = (value, num_buckets)
     cached = cache.get(cache_key)
     if cached is not None:
@@ -44,7 +54,18 @@ def prehash_movies(
     num_genre_buckets: int,
     num_director_buckets: int,
 ) -> list[PrehashedMovie]:
-    """Precompute hashed indices for Movie instances."""
+    """ Convert movie metadata into deterministic hashed indices.
+
+    Args:
+        movies: Movies to encode.
+        num_id_buckets: Number of movie-identifier buckets.
+        num_actor_buckets: Number of actor buckets.
+        num_genre_buckets: Number of genre buckets.
+        num_director_buckets: Number of director buckets.
+
+    Returns:
+        Hashed metadata for each movie in input order.
+    """
     cache: dict[tuple[str | int, int], int] = {}
     prehashed: list[PrehashedMovie] = []
 
@@ -78,7 +99,14 @@ def prehash_movies(
 def build_prehashed_bank(
     prehashed: Sequence[PrehashedMovie],
 ) -> dict[str, torch.Tensor]:
-    """Build fixed-size tensors + masks for all prehashed movies."""
+    """ Pack prehashed movies into fixed-width tensors and masks.
+
+    Args:
+        prehashed: Hashed movie records to pack.
+
+    Returns:
+        A movie tensor bank suitable for indexed collation.
+    """
     if not prehashed:
         raise ValueError("prehashed is empty; cannot build prehashed bank.")
 
@@ -125,7 +153,16 @@ def collate_prehashed_bank(
     prehashed_bank: dict[str, torch.Tensor],
     device: torch.device | str = "cpu",
 ) -> dict[str, torch.Tensor]:
-    """Collate movie indices by selecting from a prehashed bank."""
+    """ Select and flatten equally sized movie sequences from a tensor bank.
+
+    Args:
+        movie_indices_batch: Movie-bank indices grouped by batch item.
+        prehashed_bank: Source movie feature tensors and masks.
+        device: Device receiving the selected tensors.
+
+    Returns:
+        Collated movie tensors with a flattened batch-and-sequence dimension.
+    """
     if not movie_indices_batch:
         raise ValueError("movie_indices_batch is empty; cannot collate.")
 
@@ -160,4 +197,3 @@ def collate_prehashed_bank(
         selected = {key: value.to(target_device) for key, value in selected.items()}
 
     return selected
-

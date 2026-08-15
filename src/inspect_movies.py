@@ -1,4 +1,4 @@
-"""Inspect metadata for exported movie data."""
+""" Inspect metadata for exported movie data."""
 
 from __future__ import annotations
 
@@ -27,7 +27,14 @@ class MovieStats:
 
 
 def inspect_movies(data_path: Path = DATA_PATH) -> MovieStats:
-    """Load the movie CSV and print useful summary information."""
+    """ Load and summarize exported movie metadata.
+
+    Args:
+        data_path: CSV file containing exported movie metadata.
+
+    Returns:
+        Aggregated statistics for the movie dataset.
+    """
     if not data_path.exists():
         raise FileNotFoundError(f"Missing movie data at {data_path}")
 
@@ -70,6 +77,14 @@ def inspect_movies(data_path: Path = DATA_PATH) -> MovieStats:
 
 
 def _parse_list(raw_value: str | None) -> Sequence[str]:
+    """ Parse a JSON or comma-separated list value.
+
+    Args:
+        raw_value: Serialized list value, or ``None``.
+
+    Returns:
+        Parsed and trimmed string values.
+    """
     if not raw_value:
         return ()
     try:
@@ -82,6 +97,15 @@ def _parse_list(raw_value: str | None) -> Sequence[str]:
 
 
 def _maybe_append_int(raw_value: str | None, target: List[int]) -> None:
+    """ Append a valid integer value to a collection.
+
+    Args:
+        raw_value: Candidate integer string.
+        target: Collection updated when conversion succeeds.
+
+    Returns:
+        None.
+    """
     try:
         if raw_value:
             target.append(int(raw_value))
@@ -90,6 +114,15 @@ def _maybe_append_int(raw_value: str | None, target: List[int]) -> None:
 
 
 def _maybe_append_float(raw_value: str | None, target: List[float]) -> None:
+    """ Append a valid floating-point value to a collection.
+
+    Args:
+        raw_value: Candidate floating-point string.
+        target: Collection updated when conversion succeeds.
+
+    Returns:
+        None.
+    """
     try:
         if raw_value:
             target.append(float(raw_value))
@@ -98,6 +131,14 @@ def _maybe_append_float(raw_value: str | None, target: List[float]) -> None:
 
 
 def _parse_int(raw_value: str | None) -> int:
+    """ Convert a value to an integer with a zero fallback.
+
+    Args:
+        raw_value: Candidate integer string.
+
+    Returns:
+        The parsed integer, or zero when parsing fails.
+    """
     try:
         return int(raw_value) if raw_value else 0
     except ValueError:
@@ -105,6 +146,14 @@ def _parse_int(raw_value: str | None) -> int:
 
 
 def _print_stats(stats: MovieStats) -> None:
+    """ Print movie statistics in a readable format.
+
+    Args:
+        stats: Aggregated movie statistics to display.
+
+    Returns:
+        None.
+    """
     print("Movie data summary")
     print("------------------")
     print(f"Columns: {', '.join(stats.column_names)}")

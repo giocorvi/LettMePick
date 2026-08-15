@@ -1,12 +1,19 @@
-import torch
+""" Self-attention layers used by movie and user-context encoders."""
 
-"""
-TODO:
-    - Add support for variable length sequences (padding + masking)
-"""
+import torch
 
 class SelfAttentionHead(torch.nn.Module):
     def __init__(self, input_dim: int, head_dim: int, pdrop: float = 0.2):
+        """ Initialize a single self-attention head.
+
+        Args:
+            input_dim: Width of each input token.
+            head_dim: Width of projected keys, queries, and values.
+            pdrop: Attention dropout probability.
+
+        Returns:
+            None.
+        """
         super().__init__()
 
         self.head_dim = head_dim
@@ -17,6 +24,14 @@ class SelfAttentionHead(torch.nn.Module):
 
 
     def forward(self, x):
+        """ Apply self-attention to a token sequence.
+
+        Args:
+            x: Input tensor shaped ``[batch, tokens, input_dim]``.
+
+        Returns:
+            Attended tokens for this head.
+        """
         k, q, v = self.key_head(x), self.query_head(x), self.value_head(x)
 
         attn = torch.nn.functional.softmax(
@@ -37,6 +52,17 @@ class MultiSelfAttentionHead(torch.nn.Module):
         attention_pdrop: float = 0.2,
         residual_pdrop: float = 0.2,
     ):
+        """ Initialize optimized multi-head self-attention.
+
+        Args:
+            num_heads: Number of parallel attention heads.
+            input_dim: Shared input and output width.
+            attention_pdrop: Dropout probability for attention weights.
+            residual_pdrop: Dropout probability for projected outputs.
+
+        Returns:
+            None.
+        """
         super().__init__()
 
         assert input_dim % num_heads == 0, "The embedding dim has to be a multiple of the number of heads."
@@ -52,6 +78,14 @@ class MultiSelfAttentionHead(torch.nn.Module):
         self.residual_dropout = torch.nn.Dropout(residual_pdrop)
 
     def forward(self, x):
+        """ Apply multi-head self-attention to a token sequence.
+
+        Args:
+            x: Input tensor shaped ``[batch, tokens, input_dim]``.
+
+        Returns:
+            Attended tokens with the original embedding width.
+        """
         B, T, _ = x.shape
         k = self.key_head(x).reshape((B, T, self.num_heads, self.head_dim)).transpose(1, 2)
         q = self.query_head(x).reshape((B, T, self.num_heads, self.head_dim)).transpose(1, 2)
@@ -71,6 +105,15 @@ class MultiSelfAttentionHead(torch.nn.Module):
 
 class MaskedMultiSelfAttentionHead(MultiSelfAttentionHead):
     def forward(self, x, mask: torch.Tensor):
+        """ Apply self-attention while ignoring padded key positions.
+
+        Args:
+            x: Input tensor shaped ``[batch, tokens, input_dim]``.
+            mask: Boolean validity mask shaped ``[batch, tokens]``.
+
+        Returns:
+            Attended tokens with the original embedding width.
+        """
         B, T, _ = x.shape
         k = self.key_head(x).reshape((B, T, self.num_heads, self.head_dim)).transpose(1, 2)
         q = self.query_head(x).reshape((B, T, self.num_heads, self.head_dim)).transpose(1, 2)
@@ -87,6 +130,15 @@ class MaskedMultiSelfAttentionHead(MultiSelfAttentionHead):
 
 class FeedForward(torch.nn.Module):
     def __init__(self, embed_dim: int, pdrop: float = 0.2):
+        """ Initialize a transformer feed-forward sublayer.
+
+        Args:
+            embed_dim: Input and output embedding width.
+            pdrop: Output dropout probability.
+
+        Returns:
+            None.
+        """
         super().__init__()
         self.model = torch.nn.Sequential(
             torch.nn.Linear(embed_dim, embed_dim * 4),
@@ -96,11 +148,28 @@ class FeedForward(torch.nn.Module):
         )
 
     def forward(self, x):
+        """ Transform each token independently.
+
+        Args:
+            x: Token embeddings with width ``embed_dim``.
+
+        Returns:
+            Transformed token embeddings.
+        """
         return self.model(x)
 
 
 class SelfAttentionBlock(torch.nn.Module):
     def __init__(self, embed_dim: int, num_heads: int):
+        """ Initialize a residual self-attention block.
+
+        Args:
+            embed_dim: Input and output embedding width.
+            num_heads: Number of parallel attention heads.
+
+        Returns:
+            None.
+        """
         super().__init__()
         assert embed_dim % num_heads == 0, "The embedding dim has to be a multiple of the number of heads."
         self.mh_attention = MultiSelfAttentionHead(
@@ -112,6 +181,14 @@ class SelfAttentionBlock(torch.nn.Module):
         self.layer_norm_2 = torch.nn.LayerNorm(embed_dim)
 
     def forward(self, x):
+        """ Apply normalized attention and feed-forward residuals.
+
+        Args:
+            x: Input token embeddings.
+
+        Returns:
+            Contextualized token embeddings.
+        """
         x = x + self.mh_attention(self.layer_norm_1(x))
         x = x + self.feed_forward(self.layer_norm_2(x))
         return x
@@ -119,6 +196,15 @@ class SelfAttentionBlock(torch.nn.Module):
 
 class MaskedSelfAttentionBlock(torch.nn.Module):
     def __init__(self, embed_dim: int, num_heads: int):
+        """ Initialize a residual masked self-attention block.
+
+        Args:
+            embed_dim: Input and output embedding width.
+            num_heads: Number of parallel attention heads.
+
+        Returns:
+            None.
+        """
         super().__init__()
         assert embed_dim % num_heads == 0, "The embedding dim has to be a multiple of the number of heads."
         self.mh_attention = MaskedMultiSelfAttentionHead(
@@ -130,6 +216,15 @@ class MaskedSelfAttentionBlock(torch.nn.Module):
         self.layer_norm_2 = torch.nn.LayerNorm(embed_dim)
 
     def forward(self, x: torch.Tensor, mask: torch.Tensor):
+        """ Apply residual self-attention while ignoring padded keys.
+
+        Args:
+            x: Input token embeddings.
+            mask: Boolean validity mask for token positions.
+
+        Returns:
+            Contextualized token embeddings.
+        """
         x = x + self.mh_attention(self.layer_norm_1(x), mask)
         x = x + self.feed_forward(self.layer_norm_2(x))
         return x
