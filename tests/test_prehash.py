@@ -11,9 +11,6 @@ from src.data.prehash import (
 def _movies() -> list[Movie]:
     """ Create representative movies for hashing tests.
 
-    Args:
-        None.
-
     Returns:
         Two movies with different metadata cardinalities.
     """
@@ -36,14 +33,7 @@ def _movies() -> list[Movie]:
 
 
 def test_prehash_is_deterministic_and_builds_masks() -> None:
-    """ Verify deterministic hashing and correct padding masks.
-
-    Args:
-        None.
-
-    Returns:
-        None.
-    """
+    """ Verify deterministic hashing and correct padding masks."""
     kwargs = {
         "num_id_buckets": 32,
         "num_actor_buckets": 16,
@@ -77,14 +67,7 @@ def test_prehash_is_deterministic_and_builds_masks() -> None:
 
 
 def test_collate_selects_movies_in_batch_order() -> None:
-    """ Verify collation preserves requested movie order.
-
-    Args:
-        None.
-
-    Returns:
-        None.
-    """
+    """ Verify collation preserves requested movie order."""
     prehashed = prehash_movies(
         _movies(),
         num_id_buckets=32,

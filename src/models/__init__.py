@@ -7,9 +7,6 @@ def log_parameter_counts(model: torch.nn.Module) -> None:
 
     Args:
         model: PyTorch model whose parameters will be counted.
-
-    Returns:
-        None.
     """
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)

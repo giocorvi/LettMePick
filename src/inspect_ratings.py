@@ -110,9 +110,6 @@ def _write_subset(subset_path: Path, subset_df: pd.DataFrame) -> None:
     Args:
         subset_path: Destination CSV path.
         subset_df: Sampled ratings to write.
-
-    Returns:
-        None.
     """
     subset_path.parent.mkdir(parents=True, exist_ok=True)
     subset_df.to_csv(subset_path, index=False)
@@ -131,9 +128,6 @@ def _print_stats(
         subset_path: Path containing the sampled ratings.
         subset_df: Sampled ratings dataframe.
         sampled_users: User identifiers included in the sample.
-
-    Returns:
-        None.
     """
     print("Ratings export summary")
     print("----------------------")

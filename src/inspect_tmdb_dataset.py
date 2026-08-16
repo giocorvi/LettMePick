@@ -128,9 +128,6 @@ def _maybe_append_float(raw_value: str | None, target: List[float]) -> None:
     Args:
         raw_value: Candidate floating-point string.
         target: Collection updated when conversion succeeds.
-
-    Returns:
-        None.
     """
     try:
         if raw_value:
@@ -145,9 +142,6 @@ def _maybe_append_year(raw_value: str | None, target: List[int]) -> None:
     Args:
         raw_value: Candidate date beginning with a four-digit year.
         target: Collection updated when conversion succeeds.
-
-    Returns:
-        None.
     """
     if not raw_value:
         return
@@ -163,9 +157,6 @@ def _print_stats(stats: TMDBStats) -> None:
 
     Args:
         stats: Aggregated TMDB statistics to display.
-
-    Returns:
-        None.
     """
     print("TMDB v11 dataset summary")
     print("------------------------")

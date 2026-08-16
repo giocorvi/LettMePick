@@ -10,9 +10,6 @@ class SelfAttentionHead(torch.nn.Module):
             input_dim: Width of each input token.
             head_dim: Width of projected keys, queries, and values.
             pdrop: Attention dropout probability.
-
-        Returns:
-            None.
         """
         super().__init__()
 
@@ -59,9 +56,6 @@ class MultiSelfAttentionHead(torch.nn.Module):
             input_dim: Shared input and output width.
             attention_pdrop: Dropout probability for attention weights.
             residual_pdrop: Dropout probability for projected outputs.
-
-        Returns:
-            None.
         """
         super().__init__()
 
@@ -86,6 +80,7 @@ class MultiSelfAttentionHead(torch.nn.Module):
         Returns:
             Attended tokens with the original embedding width.
         """
+        # Project once at full width, then split channels into independent heads.
         B, T, _ = x.shape
         k = self.key_head(x).reshape((B, T, self.num_heads, self.head_dim)).transpose(1, 2)
         q = self.query_head(x).reshape((B, T, self.num_heads, self.head_dim)).transpose(1, 2)
@@ -119,6 +114,7 @@ class MaskedMultiSelfAttentionHead(MultiSelfAttentionHead):
         q = self.query_head(x).reshape((B, T, self.num_heads, self.head_dim)).transpose(1, 2)
         v = self.value_head(x).reshape((B, T, self.num_heads, self.head_dim)).transpose(1, 2)
 
+        # Mask padded keys so valid tokens cannot retrieve padded metadata.
         attn_scores = (q @ k.transpose(-2, -1)) / (self.head_dim ** 0.5)
         attn_scores = attn_scores.masked_fill(~mask[:, None, None, :], float("-inf"))
         attn = torch.nn.functional.softmax(attn_scores, dim=-1)
@@ -135,9 +131,6 @@ class FeedForward(torch.nn.Module):
         Args:
             embed_dim: Input and output embedding width.
             pdrop: Output dropout probability.
-
-        Returns:
-            None.
         """
         super().__init__()
         self.model = torch.nn.Sequential(
@@ -166,9 +159,6 @@ class SelfAttentionBlock(torch.nn.Module):
         Args:
             embed_dim: Input and output embedding width.
             num_heads: Number of parallel attention heads.
-
-        Returns:
-            None.
         """
         super().__init__()
         assert embed_dim % num_heads == 0, "The embedding dim has to be a multiple of the number of heads."
@@ -189,6 +179,7 @@ class SelfAttentionBlock(torch.nn.Module):
         Returns:
             Contextualized token embeddings.
         """
+        # Pre-normalized attention and feed-forward updates preserve residual state.
         x = x + self.mh_attention(self.layer_norm_1(x))
         x = x + self.feed_forward(self.layer_norm_2(x))
         return x
@@ -201,9 +192,6 @@ class MaskedSelfAttentionBlock(torch.nn.Module):
         Args:
             embed_dim: Input and output embedding width.
             num_heads: Number of parallel attention heads.
-
-        Returns:
-            None.
         """
         super().__init__()
         assert embed_dim % num_heads == 0, "The embedding dim has to be a multiple of the number of heads."
@@ -225,6 +213,7 @@ class MaskedSelfAttentionBlock(torch.nn.Module):
         Returns:
             Contextualized token embeddings.
         """
+        # Use the same pre-norm residual structure while masking metadata padding.
         x = x + self.mh_attention(self.layer_norm_1(x), mask)
         x = x + self.feed_forward(self.layer_norm_2(x))
         return x

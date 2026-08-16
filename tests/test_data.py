@@ -8,9 +8,6 @@ from src.data.data import get_train_batch, prepare_dataset, split_user_ratings_d
 def _raw_movies() -> dict[str, dict[str, object]]:
     """ Create representative raw metadata for dataset tests.
 
-    Args:
-        None.
-
     Returns:
         Raw metadata keyed by movie identifier.
     """
@@ -62,14 +59,7 @@ def _prepare(
 
 
 def test_prepare_dataset_recreates_model_input_and_remaps_ratings() -> None:
-    """ Verify raw metadata becomes model-compatible tensors and ratings.
-
-    Args:
-        None.
-
-    Returns:
-        None.
-    """
+    """ Verify raw metadata becomes model-compatible tensors and ratings."""
     ratings: dict[str, dict[str, list[int | str]]] = {
         "user-1": {
             "movie_ids": ["m1", "unknown", "m3", "missing-year"],
@@ -86,14 +76,7 @@ def test_prepare_dataset_recreates_model_input_and_remaps_ratings() -> None:
 
 
 def test_get_train_batch_returns_collated_context_and_query() -> None:
-    """ Verify training batches contain aligned context and query tensors.
-
-    Args:
-        None.
-
-    Returns:
-        None.
-    """
+    """ Verify training batches contain aligned context and query tensors."""
     ratings: dict[str, dict[str, list[int | str]]] = {
         "user-1": {
             "movie_ids": ["m1", "m2", "m3"],
@@ -123,14 +106,7 @@ def test_get_train_batch_returns_collated_context_and_query() -> None:
 
 
 def test_split_user_ratings_is_seeded_and_disjoint() -> None:
-    """ Verify seeded user splits are reproducible and disjoint.
-
-    Args:
-        None.
-
-    Returns:
-        None.
-    """
+    """ Verify seeded user splits are reproducible and disjoint."""
     ratings = {
         f"user-{index}": {"movie_ids": [0], "rating_vals": [0.5]}
         for index in range(10)

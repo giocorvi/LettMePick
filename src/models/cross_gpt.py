@@ -11,9 +11,6 @@ class CrossAttentionHead(torch.nn.Module):
             input_dim: Width of query and context tokens.
             head_dim: Width of projected keys, queries, and values.
             pdrop: Attention dropout probability.
-
-        Returns:
-            None.
         """
         super().__init__()
 
@@ -64,9 +61,6 @@ class MultiCrossAttentionHead(torch.nn.Module):
             input_dim: Shared input and output width.
             attention_pdrop: Dropout probability for attention weights.
             residual_pdrop: Dropout probability for projected outputs.
-
-        Returns:
-            None.
         """
         super().__init__()
 
@@ -92,6 +86,7 @@ class MultiCrossAttentionHead(torch.nn.Module):
         Returns:
             Context-conditioned query tokens.
         """
+        # Queries provide Q while rated context supplies K and V for retrieval.
         B, T_query, _ = query_states.shape
         _, T_ctx, _ = context_states.shape
         q = self.query_head(query_states).reshape((B, T_query, self.num_heads, self.head_dim)).transpose(1, 2)
@@ -117,9 +112,6 @@ class CrossAttentionBlock(torch.nn.Module):
         Args:
             embed_dim: Input and output embedding width.
             num_heads: Number of parallel attention heads.
-
-        Returns:
-            None.
         """
         super().__init__()
         assert embed_dim % num_heads == 0, "The embedding dim has to be a multiple of the number of heads."
@@ -142,6 +134,7 @@ class CrossAttentionBlock(torch.nn.Module):
         Returns:
             Context-conditioned query embeddings.
         """
+        # Preserve query identity while injecting normalized user-context information.
         query_states = query_states + self.mh_attention(
             self.layer_norm_q1(query_states),
             self.layer_norm_ctx(context_states)

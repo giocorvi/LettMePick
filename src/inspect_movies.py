@@ -102,9 +102,6 @@ def _maybe_append_int(raw_value: str | None, target: List[int]) -> None:
     Args:
         raw_value: Candidate integer string.
         target: Collection updated when conversion succeeds.
-
-    Returns:
-        None.
     """
     try:
         if raw_value:
@@ -119,9 +116,6 @@ def _maybe_append_float(raw_value: str | None, target: List[float]) -> None:
     Args:
         raw_value: Candidate floating-point string.
         target: Collection updated when conversion succeeds.
-
-    Returns:
-        None.
     """
     try:
         if raw_value:
@@ -150,9 +144,6 @@ def _print_stats(stats: MovieStats) -> None:
 
     Args:
         stats: Aggregated movie statistics to display.
-
-    Returns:
-        None.
     """
     print("Movie data summary")
     print("------------------")
