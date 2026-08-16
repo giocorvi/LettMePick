@@ -4,7 +4,7 @@
 
 LettMePick is an experimental PyTorch movie-recommendation project. The supported model predicts ratings for query movies from a user's previously rated context movies. The repository is being rebuilt around scalable data preparation, repeatable model training and deployment, and a future UI as the primary interaction surface.
 
-The current repository contains the data and model core only. There is no supported training CLI, inference API, deployment workflow, or UI yet. Do not assume those interfaces exist.
+The current repository contains the data/model core and a configuration-driven training CLI. There is no inference API, deployment workflow, or UI yet. Do not assume those interfaces exist.
 
 ## Supported Architecture
 
@@ -16,6 +16,7 @@ The supported flow is:
 4. `get_train_batch` samples rated context movies and held-out query movies, then collates their hashed features.
 5. `src/models/movie_encoder.py` builds feature tokens and produces one normalized embedding per movie.
 6. `src/models/lett_me_pick.py` adds learned score embeddings to rated context movies, then uses self-attention over that context and cross-attention from query movies to predict ratings.
+7. `scripts/train.py` prepares or caches data, trains from TOML configuration, logs metrics, and optionally writes validation-selected and resumable checkpoints.
 
 The old dense-embedding pipeline was deliberately removed. Do not reintroduce `MovieEmbedder`, `SimpleMovieEncoder`, `data_v2`, `prehash_v2`, or the old experimental model variants unless explicitly requested.
 
@@ -36,7 +37,9 @@ The old dense-embedding pipeline was deliberately removed. Do not reintroduce `M
 - `src/models/movie_encoder.py`: Metadata tokenization, movie attention, and final movie projection.
 - `src/models/self_gpt.py`: Self-attention and masked self-attention blocks.
 - `src/models/cross_gpt.py`: Cross-attention blocks.
-- `src/models/lett_me_pick.py`: End-to-end recommendation model, losses, and cached inference.
+- `src/models/lett_me_pick.py`: End-to-end recommendation model and cached inference.
+- `scripts/train.py`: Configuration-driven training, evaluation, logging, and optional checkpoints.
+- `configs/train.toml`: Documented baseline experiment configuration.
 - `src/inspect_*.py`: Standalone tools for inspecting external movie and ratings datasets.
 - `tests/`: Unit and integration coverage for the supported data and model path.
 
@@ -57,6 +60,13 @@ uv run pytest -q tests/test_data.py
 uv run pytest -q tests/test_prehash.py
 uv run pytest -q tests/test_losses.py
 uv run pytest -q tests/test_model.py
+uv run pytest -q tests/test_train.py
+```
+
+Start a training run from the repository root with:
+
+```bash
+uv run python scripts/train.py --config configs/train.toml
 ```
 
 No formatter, linter, type checker, CI pipeline, or packaging workflow is configured yet. Do not claim those checks passed unless the repository gains an explicit configuration for them.
@@ -84,5 +94,5 @@ No formatter, linter, type checker, CI pipeline, or packaging workflow is config
 - Preserve unrelated working-tree changes; this repository may be modified incrementally across sessions.
 - Do not commit raw datasets, generated tensor banks, model checkpoints, or secrets unless explicitly requested.
 - The inspection scripts are intentionally independent of the model pipeline and should remain usable for evaluating future data sources.
-- Treat data fetching, training orchestration, checkpoint management, serving, and UI work as future architecture unless the current task explicitly introduces them.
+- Treat data fetching, serving, deployment, and UI work as future architecture unless the current task explicitly introduces them.
 - Prefer focused changes over broad refactors, and report the exact validation commands run.

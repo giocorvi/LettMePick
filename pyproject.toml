@@ -3,6 +3,7 @@ name = "lett-me-pick"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
+    "loguru>=0.7.3",
     "pandas>=2.2.0",
     "torch>=2.3.0",
     "tqdm>=4.66.0",

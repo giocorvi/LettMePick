@@ -1,0 +1,46 @@
+# Paths are relative to this file. Inputs must be trusted torch.save files.
+[data]
+ratings_path = "/content/drive/MyDrive/LettMePickData/2026-batch/users-ratings-dict.pt"
+movies_path = "/content/drive/MyDrive/LettMePickData/2026-batch/movies-data-dict_complete.pt"
+test_ratio = 0.1
+val_ratio = 0.05
+num_id_buckets = 450000
+num_actor_buckets = 550000
+num_director_buckets = 175000
+num_genre_buckets = 20
+
+[model]
+feature_size = 12
+model_embed_dim = 128
+num_attention_heads = 4
+num_movie_attention_blocks = 6
+num_self_attention_blocks = 6
+num_cross_attention_blocks = 6
+use_feature_type_embeddings = true
+
+[training]
+epochs = 50
+steps_per_epoch = 400
+validation_steps = 20
+test_steps = 50
+batch_size = 64
+min_context_size = 32
+max_context_size = 256
+min_target_size = 32
+max_target_size = 128
+learning_rate = 0.0001
+weight_decay = 0.001
+ranking_weight = 1.0
+mse_weight = 0.25
+ranking_margin = 0.005
+max_batch_attempts = 5
+seed = 42
+progress = false
+
+[runtime]
+# Logs always appear in the terminal. Uncomment to also retain them in a file.
+# log_path = "../runs/default/train.log"
+# Checkpoints are disabled unless a directory is explicitly configured.
+# checkpoint_dir = "../runs/default/checkpoints"
+device = "auto"
+save_every = 0
