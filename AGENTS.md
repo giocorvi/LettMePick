@@ -16,7 +16,7 @@ The supported flow is:
 4. `get_train_batch` samples rated context movies and held-out query movies, then collates their hashed features.
 5. `src/models/movie_encoder.py` builds feature tokens and produces one normalized embedding per movie.
 6. `src/models/lett_me_pick.py` adds learned score embeddings to rated context movies, then uses self-attention over that context and cross-attention from query movies to predict ratings.
-7. `scripts/train.py` prepares or caches data, trains from TOML configuration, logs metrics, and optionally writes validation-selected and resumable checkpoints.
+7. `src/train.py` prepares or caches data, trains from TOML configuration, logs metrics, and optionally writes validation-selected and resumable checkpoints.
 
 The old dense-embedding pipeline was deliberately removed. Do not reintroduce `MovieEmbedder`, `SimpleMovieEncoder`, `data_v2`, `prehash_v2`, or the old experimental model variants unless explicitly requested.
 
@@ -38,7 +38,9 @@ The old dense-embedding pipeline was deliberately removed. Do not reintroduce `M
 - `src/models/self_gpt.py`: Self-attention and masked self-attention blocks.
 - `src/models/cross_gpt.py`: Cross-attention blocks.
 - `src/models/lett_me_pick.py`: End-to-end recommendation model and cached inference.
-- `scripts/train.py`: Configuration-driven training, evaluation, logging, and optional checkpoints.
+- `src/train.py`: Configuration-driven training, evaluation, logging, and optional checkpoints.
+- `src/utils/config.py`: Training configuration models, TOML loading, and validation.
+- `src/utils/train.py`: Reusable training, evaluation, logging, and checkpoint helpers.
 - `configs/train.toml`: Documented baseline experiment configuration.
 - `src/inspect_*.py`: Standalone tools for inspecting external movie and ratings datasets.
 - `tests/`: Unit and integration coverage for the supported data and model path.
@@ -66,7 +68,7 @@ uv run pytest -q tests/test_train.py
 Start a training run from the repository root with:
 
 ```bash
-uv run python scripts/train.py --config configs/train.toml
+uv run python src/train.py --config configs/train.toml
 ```
 
 No formatter, linter, type checker, CI pipeline, or packaging workflow is configured yet. Do not claim those checks passed unless the repository gains an explicit configuration for them.

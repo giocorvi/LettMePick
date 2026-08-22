@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 import torch
 
-from scripts.train import (
+from src.train import (
     DataConfig,
     ExperimentConfig,
     ModelConfig,
