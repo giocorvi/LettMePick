@@ -13,7 +13,11 @@ from loguru import logger
 from torch import Tensor
 
 from src.data.data import get_train_batch, prepare_dataset
-from src.losses import mean_squared_error_loss, pairwise_margin_ranking_loss
+from src.losses import (
+    mean_squared_error_loss,
+    pairwise_huber_loss,
+    pairwise_margin_ranking_loss,
+)
 from src.models.lett_me_pick import LettMePick
 from src.utils.config import DataConfig, ExperimentConfig, TrainingConfig
 
@@ -213,12 +217,19 @@ def loss_components(
         config: Loss settings.
 
     Returns:
-        Total, MSE, and pairwise ranking losses.
+        Total, MSE, and the selected pairwise loss (logged as ``ranking``).
     """
     mse = mean_squared_error_loss(predictions, targets)
-    ranking = pairwise_margin_ranking_loss(
-        predictions, targets, margin=config.ranking_margin
-    )
+    if config.ranking_loss == "huber":
+        ranking = pairwise_huber_loss(
+            predictions, targets, delta=config.ranking_huber_delta
+        )
+    elif config.ranking_loss == "margin":
+        ranking = pairwise_margin_ranking_loss(
+            predictions, targets, margin=config.ranking_margin
+        )
+    else:
+        raise ValueError("ranking_loss must be 'margin' or 'huber'")
     return config.mse_weight * mse + config.ranking_weight * ranking, mse, ranking
 
 

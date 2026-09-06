@@ -243,31 +243,64 @@ class LettMePick(torch.nn.Module):
         """
         self.eval()
 
+        with torch.inference_mode():
+            context = self.encode_context(context_movies, context_scores)
+            for query_batch in query_batches:
+                yield self.score_encoded_context(context, query_batch)
+
+    def encode_context(
+        self,
+        context_movies: dict[str, torch.Tensor],
+        context_scores: torch.Tensor,
+    ) -> torch.Tensor:
+        """ Encode and rating-condition a context for reuse across query batches.
+
+        Args:
+            context_movies: Collated hashed features for rated movies.
+            context_scores: Known ratings for the context movies.
+
+        Returns:
+            Context embeddings after rating conditioning and self-attention.
+        """
         batch_size, context_size = self._context_shape(context_scores)
-        # Encode and contextualize the rated history once for every query chunk.
         context = self.encoder(
             context_movies,
             batch_size=batch_size,
             sequence_size=context_size,
         )
         context = self._condition_context(context, context_scores)
-
         for block in self.self_attention_blocks:
             context = block(context)
+        return context
 
-        with torch.inference_mode():
-            for query_batch in query_batches:
-                query_size = self._sequence_size(query_batch, batch_size, "query_batch")
-                query = self.encoder(
-                    query_batch,
-                    batch_size=batch_size,
-                    sequence_size=query_size,
-                )
+    def score_encoded_context(
+        self,
+        encoded_context: torch.Tensor,
+        query_movies: dict[str, torch.Tensor],
+    ) -> torch.Tensor:
+        """ Score one query batch against a previously encoded context.
 
-                for block in self.cross_attention_blocks:
-                    query = block(query, context)
+        Args:
+            encoded_context: Context embeddings shaped ``[batch, movies, embedding]``.
+            query_movies: Collated hashed features for query movies.
 
-                predictions = self.final_block(
-                    query.reshape(batch_size * query_size, -1)
-                ).reshape((batch_size, query_size))
-                yield predictions
+        Returns:
+            Predicted ratings in the range ``[0, 1]``.
+        """
+        if encoded_context.ndim != 3:
+            raise ValueError(
+                "encoded_context must have shape [B, T, D], got "
+                f"{encoded_context.shape}."
+            )
+        batch_size = int(encoded_context.shape[0])
+        query_size = self._sequence_size(query_movies, batch_size, "query_movies")
+        query = self.encoder(
+            query_movies,
+            batch_size=batch_size,
+            sequence_size=query_size,
+        )
+        for block in self.cross_attention_blocks:
+            query = block(query, encoded_context)
+        return self.final_block(
+            query.reshape(batch_size * query_size, -1)
+        ).reshape((batch_size, query_size))

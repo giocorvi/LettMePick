@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Sequence, TYPE_CHECKING
 
 import torch
@@ -94,6 +95,74 @@ def prehash_movies(
         )
 
     return prehashed
+
+
+def build_movie_bank(
+    movies: Sequence[Movie],
+    num_id_buckets: int,
+    num_actor_buckets: int,
+    num_genre_buckets: int,
+    num_director_buckets: int,
+) -> dict[str, torch.Tensor]:
+    """ Hash movies directly into a tensor bank without an intermediate object list.
+
+    Args:
+        movies: Normalized movies in bank-row order.
+        num_id_buckets: Number of movie-identifier buckets.
+        num_actor_buckets: Number of actor buckets.
+        num_genre_buckets: Number of genre buckets.
+        num_director_buckets: Number of director buckets.
+
+    Returns:
+        A movie tensor bank suitable for indexed collation.
+    """
+    if not movies:
+        raise ValueError("movies is empty; cannot build movie bank.")
+
+    count = len(movies)
+    max_actors = max((len(movie.actors or []) for movie in movies), default=0)
+    max_genres = max((len(movie.genres or []) for movie in movies), default=0)
+    max_directors = max((len(movie.directors or []) for movie in movies), default=0)
+    bank: dict[str, torch.Tensor] = {
+        "id_idx": torch.empty(count, dtype=torch.long),
+        "year": torch.empty(count, dtype=torch.float32),
+        "actors_idx": torch.zeros((count, max_actors), dtype=torch.long),
+        "actors_mask": torch.zeros((count, max_actors), dtype=torch.bool),
+        "genres_idx": torch.zeros((count, max_genres), dtype=torch.long),
+        "genres_mask": torch.zeros((count, max_genres), dtype=torch.bool),
+        "directors_idx": torch.zeros((count, max_directors), dtype=torch.long),
+        "directors_mask": torch.zeros((count, max_directors), dtype=torch.bool),
+    }
+    @lru_cache(maxsize=100_000)
+    def hash_value(value: str | int, buckets: int) -> int:
+        """ Hash one value while bounding preparation-time cache memory.
+
+        Args:
+            value: Feature value to hash.
+            buckets: Number of available buckets.
+
+        Returns:
+            The zero-based bucket index.
+        """
+        return _hash_to_bucket(value, buckets, {})
+
+    for index, movie in enumerate(movies):
+        bank["id_idx"][index] = hash_value(movie.id, num_id_buckets)
+        bank["year"][index] = movie.year
+        features = (
+            ("actors", movie.actors or [], num_actor_buckets),
+            ("genres", movie.genres or [], num_genre_buckets),
+            ("directors", movie.directors or [], num_director_buckets),
+        )
+        for name, values, buckets in features:
+            if not values:
+                continue
+            hashed = [hash_value(value, buckets) for value in values]
+            end = len(hashed)
+            bank[f"{name}_idx"][index, :end] = torch.as_tensor(hashed, dtype=torch.long)
+            bank[f"{name}_mask"][index, :end] = True
+
+    return bank
 
 
 def build_prehashed_bank(

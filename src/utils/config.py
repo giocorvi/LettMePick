@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import math
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 
 @dataclass(frozen=True)
@@ -76,6 +78,9 @@ class TrainingConfig:
         ranking_weight: Pairwise loss weight.
         mse_weight: Mean squared error weight.
         ranking_margin: Pairwise ranking margin.
+        ranking_loss: Pairwise objective: legacy margin ranking or twice Huber
+            regression on rating differences (logged as ``ranking``).
+        ranking_huber_delta: Positive finite difference-error threshold for Huber.
         max_grad_norm: Optional gradient clipping threshold.
         max_batch_attempts: Maximum invalid-batch retries.
         seed: Python and PyTorch random seed.
@@ -100,6 +105,8 @@ class TrainingConfig:
     max_batch_attempts: int = 20
     seed: int = 42
     progress: bool = True
+    ranking_loss: Literal["margin", "huber"] = "margin"
+    ranking_huber_delta: float = 0.1
 
 
 @dataclass(frozen=True)
@@ -211,6 +218,10 @@ def validate_config(config: ExperimentConfig) -> None:
         raise ValueError("max_context_size must be at least min_context_size")
     if training.max_target_size < training.min_target_size:
         raise ValueError("max_target_size must be at least min_target_size")
+    if training.ranking_loss not in ("margin", "huber"):
+        raise ValueError("training.ranking_loss must be 'margin' or 'huber'")
+    if not math.isfinite(training.ranking_huber_delta) or training.ranking_huber_delta <= 0:
+        raise ValueError("training.ranking_huber_delta must be finite and greater than zero")
     if (
         min(training.ranking_weight, training.mse_weight) < 0
         or training.ranking_weight + training.mse_weight == 0

@@ -33,6 +33,10 @@ weight_decay = 0.01
 ranking_weight = 1.0
 mse_weight = 0.25
 ranking_margin = 0.1
+# Use "huber" for 2 * Huber on rating differences, including tied targets.
+# ranking_weight scales either objective; the metric remains named "ranking".
+ranking_loss = "margin"
+ranking_huber_delta = 0.1 # Difference-error threshold, used only for "huber".
 max_grad_norm = 1.0
 max_batch_attempts = 20
 seed = 42

@@ -20,15 +20,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.data.data import split_user_ratings_dict
-from src.utils.config import (
-    DataConfig,
-    ExperimentConfig,
-    ModelConfig,
-    RuntimeConfig,
-    TrainingConfig,
-    load_config,
-    validate_config,
-)
+from src.utils.config import ExperimentConfig, RuntimeConfig, load_config, validate_config
 from src.utils.train import (
     build_model,
     checkpoint_payload,

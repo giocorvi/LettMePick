@@ -210,6 +210,22 @@ def test_cached_inference_matches_forward() -> None:
     torch.testing.assert_close(actual, expected)
 
 
+def test_reusable_encoded_context_matches_forward() -> None:
+    """ Verify public cached-context operations reproduce ordinary inference."""
+    bank = _bank()
+    context = collate_prehashed_bank([[0, 1]], bank)
+    query = collate_prehashed_bank([[2, 3]], bank)
+    scores = torch.tensor([[0.8, 0.4]])
+    model = _model().eval()
+
+    with torch.inference_mode():
+        encoded = model.encode_context(context, scores)
+        actual = model.score_encoded_context(encoded, query)
+        expected = model(context, query, scores)
+
+    torch.testing.assert_close(actual, expected)
+
+
 def test_freeze_and_unfreeze_embeddings() -> None:
     """ Verify embedding controls leave movie attention trainable."""
     model = _model()

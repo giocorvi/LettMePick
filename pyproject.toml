@@ -3,14 +3,20 @@ name = "lett-me-pick"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
+    "fastapi>=0.115.0",
     "loguru>=0.7.3",
     "pandas>=2.2.0",
+    "requests>=2.34.2",
     "torch>=2.3.0",
     "tqdm>=4.66.0",
+    "uvicorn>=0.30.0",
 ]
 
 [dependency-groups]
 dev = [
+    "beautifulsoup4>=4.13.0",
+    "httpx>=0.28.0",
+    "ipdb>=0.13.13",
     "pytest>=8.0.0",
 ]
 

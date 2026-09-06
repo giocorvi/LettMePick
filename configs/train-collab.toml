@@ -7,10 +7,10 @@ val_ratio = 0.05
 num_id_buckets = 450000
 num_actor_buckets = 550000
 num_director_buckets = 175000
-num_genre_buckets = 20
+num_genre_buckets = 64
 
 [model]
-feature_size = 12
+feature_size = 24
 model_embed_dim = 128
 num_attention_heads = 4
 num_movie_attention_blocks = 6
@@ -30,9 +30,12 @@ min_target_size = 32
 max_target_size = 128
 learning_rate = 0.0001
 weight_decay = 0.001
-ranking_weight = 1.0
-mse_weight = 0.25
-ranking_margin = 0.005
+# MSE anchors absolute ratings; pairwise Huber learns rating differences.
+mse_weight = 1.0
+ranking_weight = 0.5
+ranking_loss = "huber"
+# Error threshold in normalized rating units; the pairwise loss uses 2 * Huber.
+ranking_huber_delta = 0.1
 max_batch_attempts = 5
 seed = 42
 progress = false

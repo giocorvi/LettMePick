@@ -2,7 +2,13 @@ import random
 
 import torch
 
-from src.data.data import get_train_batch, prepare_dataset, split_user_ratings_dict
+from src.data.data import (
+    build_movie_catalog,
+    filter_movie_catalog,
+    get_train_batch,
+    prepare_dataset,
+    split_user_ratings_dict,
+)
 
 
 def _raw_movies() -> dict[str, dict[str, object]]:
@@ -15,18 +21,21 @@ def _raw_movies() -> dict[str, dict[str, object]]:
         "m1": {
             "year_released": 1990,
             "letterboxd_genres": ["Drama"],
+            "letterboxd_rating_count": 1_000,
             "actors": ["Actor A"],
             "director": ["Director A"],
         },
         "m2": {
             "year_released": 2000,
             "letterboxd_genres": ["Comedy"],
+            "letterboxd_rating_count": "100000",
             "actors": ["Actor B"],
             "director": ["Director B"],
         },
         "m3": {
             "year_released": 2010,
             "letterboxd_genres": ["Action"],
+            "letterboxd_rating_count": -25,
             "actors": [],
             "director": ["Director C"],
         },
@@ -73,6 +82,57 @@ def test_prepare_dataset_recreates_model_input_and_remaps_ratings() -> None:
     torch.testing.assert_close(bank["year"], torch.tensor([1990.0, 2000.0, 2010.0]))
     assert ratings["user-1"]["movie_ids"] == [0, 2]
     assert ratings["user-1"]["rating_vals"] == [0.8, 0.6]
+
+
+def test_movie_catalog_aligns_with_bank_and_resolves_titles() -> None:
+    """ Verify searchable metadata shares filtering and row order with the bank."""
+    movies = _raw_movies()
+    movies["m1"]["title"] = "First Feature"
+    movies["m2"]["movie_title"] = "Second Feature"
+
+    catalog = build_movie_catalog(movies)
+    bank = prepare_dataset(
+        {},
+        movies,
+        num_id_buckets=32,
+        num_actor_buckets=16,
+        num_genre_buckets=8,
+        num_director_buckets=8,
+    )
+
+    assert [entry.bank_index for entry in catalog] == list(range(len(catalog)))
+    assert [entry.title for entry in catalog] == ["First Feature", "Second Feature", "m3"]
+    assert [entry.year for entry in catalog] == bank["year"].tolist()
+    assert [entry.letterboxd_rating_count for entry in catalog] == [1_000, 100_000, 0]
+
+
+def test_movie_catalog_normalizes_missing_and_malformed_popularity() -> None:
+    """ Verify invalid raw rating counts become zero without dropping movies."""
+    movies = _raw_movies()
+    movies["m1"]["letterboxd_rating_count"] = None
+    movies["m2"]["letterboxd_rating_count"] = "not-a-number"
+    movies["m3"].pop("letterboxd_rating_count")
+
+    catalog = build_movie_catalog(movies)
+
+    assert [entry.letterboxd_rating_count for entry in catalog] == [0, 0, 0]
+
+
+def test_movie_catalog_filters_year_genre_and_popularity_together() -> None:
+    """ Verify inclusive popularity composes with years and genre union semantics."""
+    movies = _raw_movies()
+    movies["m1"]["letterboxd_genres"] = ["Drama", "Thriller"]
+    catalog = build_movie_catalog(movies)
+
+    filtered = filter_movie_catalog(
+        catalog,
+        min_year=1990,
+        max_year=2005,
+        genres=["comedy", "thriller"],
+        min_rating_count=1_000,
+    )
+
+    assert [entry.id for entry in filtered] == ["m1", "m2"]
 
 
 def test_get_train_batch_returns_collated_context_and_query() -> None:

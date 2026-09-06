@@ -5,3 +5,10 @@ __pycache__/
 .venv/
 ui/**
 notebooks/**
+checkpoints/**
+saved_contexts/
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts

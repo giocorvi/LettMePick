@@ -1,0 +1,14 @@
+# Trusted model checkpoints available to the local testing workbench.
+# Paths are resolved relative to this file. An optional config overrides the
+# experiment configuration embedded in the checkpoint and remains inspectable in the UI.
+[[models]]
+name = "LettMePick_v1.0"
+path = "../checkpoints/model_stable_v1.0.pt"
+config = "../configs/inference_v1.toml"
+description = "Epoch 11"
+
+[[models]]
+name = "LettMePick_v1.1"
+path = "../checkpoints/model_stable_v1.1.pt"
+config = "../configs/inference_v1.toml"
+description = "Epoch 32"

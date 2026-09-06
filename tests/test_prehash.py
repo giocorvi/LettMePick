@@ -2,6 +2,7 @@ import torch
 
 from src.data.data import Movie
 from src.data.prehash import (
+    build_movie_bank,
     build_prehashed_bank,
     collate_prehashed_bank,
     prehash_movies,
@@ -84,3 +85,20 @@ def test_collate_selects_movies_in_batch_order() -> None:
         batch["year"],
         torch.tensor([2005.0, 1999.0, 1999.0, 2005.0]),
     )
+
+
+def test_direct_movie_bank_matches_two_stage_hashing() -> None:
+    """ Verify memory-efficient bank construction preserves hashed tensors."""
+    kwargs = {
+        "num_id_buckets": 32,
+        "num_actor_buckets": 16,
+        "num_genre_buckets": 8,
+        "num_director_buckets": 8,
+    }
+
+    expected = build_prehashed_bank(prehash_movies(_movies(), **kwargs))
+    actual = build_movie_bank(_movies(), **kwargs)
+
+    assert actual.keys() == expected.keys()
+    for key in expected:
+        torch.testing.assert_close(actual[key], expected[key])

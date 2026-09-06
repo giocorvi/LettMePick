@@ -4,16 +4,126 @@ from typing import Any
 
 import torch
 
-from src.data.prehash import build_prehashed_bank, collate_prehashed_bank, prehash_movies
+from src.data.prehash import build_movie_bank, collate_prehashed_bank
 
 
 @dataclass(frozen=True)
 class Movie:
+    """ Store normalized movie metadata used by feature hashing."""
+
     id: str
     year: int
     genres: list[str]
     actors: list[str]
     directors: list[str]
+
+
+@dataclass(frozen=True)
+class MovieCatalogEntry:
+    """ Describe one searchable movie while preserving its tensor-bank row."""
+
+    bank_index: int
+    id: str
+    title: str
+    year: int
+    genres: list[str]
+    letterboxd_rating_count: int = 0
+
+
+POPULARITY_LEVELS: tuple[dict[str, str | int], ...] = (
+    {"id": "any", "label": "Any", "min_rating_count": 0},
+    {"id": "established", "label": "Established", "min_rating_count": 1_000},
+    {"id": "popular", "label": "Popular", "min_rating_count": 100_000},
+    {"id": "blockbuster", "label": "Blockbuster", "min_rating_count": 1_000_000},
+)
+
+
+def _normalize_rating_count(value: Any) -> int:
+    """ Normalize raw Letterboxd rating counts to non-negative integers.
+
+    Args:
+        value: Raw metadata value.
+
+    Returns:
+        Parsed count, or zero when the value is absent or invalid.
+    """
+    if value is None or isinstance(value, bool):
+        return 0
+    try:
+        count = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+    return max(count, 0)
+
+
+def build_movie_catalog(
+    movie_dataset: dict[str, dict[str, Any]],
+) -> list[MovieCatalogEntry]:
+    """ Build display metadata in the same order used by the hashed movie bank.
+
+    Args:
+        movie_dataset: Raw movie metadata keyed by movie identifier.
+
+    Returns:
+        Searchable catalog entries aligned with movie-bank rows.
+    """
+    catalog: list[MovieCatalogEntry] = []
+    for movie_id, movie_info in movie_dataset.items():
+        year = movie_info.get("year_released")
+        if year is None:
+            continue
+        title = movie_info.get("title") or movie_info.get("movie_title") or movie_id
+        genres = [str(genre).lower() for genre in movie_info.get("letterboxd_genres", [])]
+        catalog.append(
+            MovieCatalogEntry(
+                bank_index=len(catalog),
+                id=str(movie_id),
+                title=str(title),
+                year=int(year),
+                genres=genres,
+                letterboxd_rating_count=_normalize_rating_count(
+                    movie_info.get("letterboxd_rating_count")
+                ),
+            )
+        )
+    return catalog
+
+
+def filter_movie_catalog(
+    catalog: list[MovieCatalogEntry],
+    min_year: int | None = None,
+    max_year: int | None = None,
+    genres: list[str] | None = None,
+    min_rating_count: int = 0,
+) -> list[MovieCatalogEntry]:
+    """ Filter catalog entries by year, genres, and minimum popularity.
+
+    Args:
+        catalog: Searchable movies to filter.
+        min_year: Optional inclusive earliest release year.
+        max_year: Optional inclusive latest release year.
+        genres: Optional genres; a movie passes when any genre overlaps.
+        min_rating_count: Inclusive minimum Letterboxd rating count.
+
+    Returns:
+        Matching catalog entries in their original bank order.
+    """
+    if min_year is not None and max_year is not None and min_year > max_year:
+        raise ValueError("min_year cannot be greater than max_year.")
+    if min_rating_count < 0:
+        raise ValueError("min_rating_count cannot be negative.")
+    selected_genres = {genre.casefold() for genre in genres or []}
+    return [
+        entry
+        for entry in catalog
+        if (min_year is None or entry.year >= min_year)
+        and (max_year is None or entry.year <= max_year)
+        and entry.letterboxd_rating_count >= min_rating_count
+        and (
+            not selected_genres
+            or bool(selected_genres.intersection(genre.casefold() for genre in entry.genres))
+        )
+    ]
 
 
 def prepare_dataset(
@@ -40,26 +150,22 @@ def prepare_dataset(
     Returns:
         A tensor bank containing hashed movie features and masks.
     """
-    movie_id_to_index: dict[str, int] = {}
+    catalog = build_movie_catalog(movie_dataset)
+    movie_id_to_index = (
+        {entry.id: entry.bank_index for entry in catalog} if user_ratings_dict else {}
+    )
     final_movie_dataset: list[Movie] = []
-
-    for movie_id, movie_info in movie_dataset.items():
-        if movie_info.get("year_released") is None:
-            continue
-
-        genres = movie_info.get("letterboxd_genres", [])
-        genres = [g.lower() for g in genres]
-
+    for entry in catalog:
+        movie_info = movie_dataset[entry.id]
         final_movie_dataset.append(
             Movie(
-                id=movie_id,
-                year=movie_info["year_released"],
-                genres=genres,
+                id=entry.id,
+                year=entry.year,
+                genres=entry.genres,
                 actors=movie_info.get("actors", []),
                 directors=movie_info.get("director", []),
             )
         )
-        movie_id_to_index[movie_id] = len(final_movie_dataset) - 1
 
     for user_id in user_ratings_dict:
         movie_ids = user_ratings_dict[user_id]["movie_ids"]
@@ -81,14 +187,13 @@ def prepare_dataset(
         user_ratings_dict[user_id]["movie_ids"] = new_movie_ids
         user_ratings_dict[user_id]["rating_vals"] = new_rating_vals
 
-    prehashed = prehash_movies(
+    return build_movie_bank(
         final_movie_dataset,
         num_id_buckets=num_id_buckets,
         num_actor_buckets=num_actor_buckets,
         num_genre_buckets=num_genre_buckets,
         num_director_buckets=num_director_buckets,
     )
-    return build_prehashed_bank(prehashed)
 
 
 def get_train_batch(
